@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+.env
+.env.local
+
+# Uploaded/extracted question sets are runtime data, not source.
+server/data/*
+!server/data/.gitkeep
