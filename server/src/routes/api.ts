@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { nanoid } from "nanoid";
-import { createSession, getSessionByCode } from "../sessionStore.js";
+import { createSession, getSession, getSessionByCode, setQuestionSet } from "../sessionStore.js";
+import { questionSetSchema } from "../questionSetSchema.js";
 
 export const apiRouter = Router();
 
@@ -22,4 +23,22 @@ apiRouter.get("/sessions/by-code/:code", (req, res) => {
     return;
   }
   res.json({ id: session.id, code: session.code, state: session.state });
+});
+
+// Attaches a question set to a lobby directly as JSON. The admin upload
+// flow (ZIP/JSON file, zip-slip-safe extraction, image serving) lands with
+// the question-set import issue and will call into the same validation.
+apiRouter.put("/sessions/:id/question-set", (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const parsed = questionSetSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_question_set", details: parsed.error.flatten() });
+    return;
+  }
+  setQuestionSet(session, parsed.data);
+  res.json({ ok: true });
 });
