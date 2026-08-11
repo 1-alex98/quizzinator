@@ -31,9 +31,15 @@ realtime/reconnect logic and keep the deploy to a single service.
 | `geo` | tap-to-place a pin on a [Leaflet](https://leafletjs.com/) map (OpenStreetMap tiles — free, no API key, matters for free-tier hosting) | Haversine distance to `correctLat/correctLng`; points fall off to 0 at `maxDistanceKm` |
 | `fuzzy-text` | free-text input | normalized similarity via [`fastest-levenshtein`](https://github.com/ott-jarv/fastest-levenshtein) against `acceptedAnswers`, correct if similarity ≥ per-question `threshold` |
 
-Shared fields: every question has `points`, an optional `media.imageUrl`
-(remote URL or a path resolved from an extracted question-set ZIP), and an
-optional `timeLimitSec` — **defaults to 30s** when omitted. The server owns
+Shared fields: every question has `points`, a required `prompt` (text), an
+optional `media.imageUrl` (remote URL or a path resolved from an extracted
+question-set ZIP), and an optional `timeLimitSec` — **defaults to 30s** when
+omitted. This applies uniformly across all three types: a question is either
+**text-only** (`prompt`, no `media`) or **image + text** (`prompt` plus
+`media.imageUrl`) — never image-only. Both the mobile answer screen and the
+host/TV screen render the prompt (and the image above/alongside it, when
+present) the same way regardless of question type, before/around the
+type-specific answer widget (slider / map / text input). The server owns
 the countdown and is the single source of truth for time remaining (clients
 just render what the server tells them), so the timer shown on the TV and on
 phones can't drift apart even under bad wifi.
