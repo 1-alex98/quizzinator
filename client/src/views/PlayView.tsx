@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { getSocket } from "../lib/socket.js";
+import { GeoMapInput, type GeoGuess } from "../components/GeoMapInput.js";
+import { NumberAnswerInput } from "../components/NumberAnswerInput.js";
+import { QuestionPrompt } from "../components/QuestionPrompt.js";
 import type {
   AnswerResult,
   LeaderboardPayload,
@@ -15,10 +18,9 @@ function storageKey(code: string): string {
   return `quizzinator:player:${code}`;
 }
 
-// Mobile participant app. One phase fills the screen at a time; the
-// type-specific answer widgets here (plain range/number/text inputs) are
-// deliberately minimal — the slider/map/fuzzy-text polish lands with their
-// respective question-type issues.
+// Mobile participant app. One phase fills the screen at a time. The geo
+// question type takes over the full screen for its map (see GeoMapInput);
+// number and fuzzy-text share the generic centered "screen" layout.
 export function PlayView() {
   const { code } = useParams<{ code: string }>();
   const [phase, setPhase] = useState<Phase>("join");
@@ -31,6 +33,7 @@ export function PlayView() {
   const [revealed, setRevealed] = useState<QuestionRevealedPayload | null>(null);
   const [ended, setEnded] = useState<LeaderboardPayload | null>(null);
   const [answerValue, setAnswerValue] = useState<string>("");
+  const [geoPin, setGeoPin] = useState<GeoGuess | null>(null);
 
   useEffect(() => {
     if (!code) return;
@@ -40,6 +43,7 @@ export function PlayView() {
       setQuestion(payload);
       setRemainingSec(payload.timeLimitSec);
       setAnswerValue(defaultAnswerFor(payload.question));
+      setGeoPin(null);
       setRevealed(null);
       setPhase("answering");
     };
@@ -86,9 +90,8 @@ export function PlayView() {
     });
   };
 
-  const submitAnswer = () => {
-    if (!sessionId || !playerId || !question) return;
-    const value = parseAnswer(question.question, answerValue);
+  const submitAnswer = (value: unknown) => {
+    if (!sessionId || !playerId) return;
     getSocket().emit("answer:submit", { sessionId, playerId, value }, (res) => {
       if (res && !res.ok) {
         setError(res.error);
@@ -141,12 +144,23 @@ export function PlayView() {
   }
 
   if (phase === "answering" && question) {
+    if (question.question.type === "geo") {
+      return (
+        <GeoMapInput
+          question={question.question}
+          remainingSec={remainingSec ?? question.timeLimitSec}
+          pin={geoPin}
+          onPick={setGeoPin}
+          onSubmit={() => geoPin && submitAnswer(geoPin)}
+        />
+      );
+    }
     return (
       <div className="screen">
         <p>{remainingSec ?? question.timeLimitSec}s left</p>
-        <h1>{question.question.prompt}</h1>
+        <QuestionPrompt question={question.question} />
         <AnswerInput question={question.question} value={answerValue} onChange={setAnswerValue} />
-        <button className="btn" onClick={submitAnswer}>
+        <button className="btn" onClick={() => submitAnswer(parseAnswer(question.question, answerValue))}>
           Submit
         </button>
       </div>
@@ -198,10 +212,6 @@ function defaultAnswerFor(question: PublicQuestion): string {
 
 function parseAnswer(question: PublicQuestion, raw: string): unknown {
   if (question.type === "number") return Number(raw);
-  if (question.type === "geo") {
-    const [lat, lng] = raw.split(",").map((part) => Number(part.trim()));
-    return { lat, lng };
-  }
   return raw;
 }
 
@@ -216,23 +226,10 @@ function AnswerInput({
 }) {
   if (question.type === "number") {
     return (
-      <input
-        type="range"
-        min={question.min}
-        max={question.max}
-        step={question.step}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    );
-  }
-  if (question.type === "geo") {
-    return (
-      <input
-        type="text"
-        placeholder="lat, lng"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+      <NumberAnswerInput
+        question={question}
+        value={Number(value)}
+        onChange={(next) => onChange(String(next))}
       />
     );
   }

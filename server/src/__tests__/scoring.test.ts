@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scoreAnswer } from "../scoring.js";
+import { haversineKm, scoreAnswer } from "../scoring.js";
 import type { FuzzyTextQuestion, GeoQuestion, NumberQuestion } from "../types.js";
 
 const numberQuestion: NumberQuestion = {
@@ -44,6 +44,19 @@ describe("scoreAnswer for number questions", () => {
     expect(result.score).toBeLessThan(100);
   });
 
+  it("falls off linearly: 10% of the range off loses 10% of the points", () => {
+    // range is max - min = 100, so a guess 10 away is 10% off.
+    expect(scoreAnswer(numberQuestion, 60)).toEqual({ score: 90, correct: false });
+  });
+
+  it("falls off linearly: half the range off loses half the points", () => {
+    expect(scoreAnswer(numberQuestion, 100)).toEqual({ score: 50, correct: false });
+  });
+
+  it("awards zero once the guess is a full range-width away", () => {
+    expect(scoreAnswer(numberQuestion, 150)).toEqual({ score: 0, correct: false });
+  });
+
   it("awards zero for a non-numeric answer", () => {
     expect(scoreAnswer(numberQuestion, "not-a-number")).toEqual({ score: 0, correct: false });
   });
@@ -59,6 +72,18 @@ describe("scoreAnswer for geo questions", () => {
   it("falls off to zero beyond maxDistanceKm", () => {
     const result = scoreAnswer(geoQuestion, { lat: -52.52, lng: -166.595 });
     expect(result.score).toBe(0);
+  });
+
+  it("falls off linearly with the haversine distance to the correct point", () => {
+    // A point due north of the correct location whose known haversine
+    // distance is exactly half of maxDistanceKm should lose half the points.
+    const halfway = { lat: geoQuestion.correctLat + (geoQuestion.maxDistanceKm / 2 / 111.32), lng: geoQuestion.correctLng };
+    const distanceKm = haversineKm(halfway.lat, halfway.lng, geoQuestion.correctLat, geoQuestion.correctLng);
+    expect(distanceKm).toBeCloseTo(geoQuestion.maxDistanceKm / 2, 0);
+
+    const result = scoreAnswer(geoQuestion, halfway);
+    expect(result.score).toBe(Math.round(geoQuestion.points * (1 - distanceKm / geoQuestion.maxDistanceKm)));
+    expect(result.correct).toBe(false);
   });
 
   it("awards zero for a malformed guess", () => {

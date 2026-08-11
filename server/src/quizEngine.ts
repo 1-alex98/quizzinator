@@ -1,6 +1,6 @@
 import type { Server, Socket } from "socket.io";
 import { getSession, getSessionByCode, upsertPlayer } from "./sessionStore.js";
-import { scoreAnswer } from "./scoring.js";
+import { haversineKm, scoreAnswer } from "./scoring.js";
 import type { Question, QuizSession } from "./types.js";
 import type {
   AckResponse,
@@ -106,6 +106,16 @@ function extractCorrectAnswer(question: Question): unknown {
   }
 }
 
+/** Distance in km between a geo guess and the correct location, if the guess is well-formed. */
+function distanceForGeoGuess(question: Question, value: unknown): number | undefined {
+  if (question.type !== "geo") return undefined;
+  const guess = value as { lat?: unknown; lng?: unknown } | null | undefined;
+  const lat = typeof guess?.lat === "number" ? guess.lat : NaN;
+  const lng = typeof guess?.lng === "number" ? guess.lng : NaN;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+  return haversineKm(lat, lng, question.correctLat, question.correctLng);
+}
+
 function revealQuestion(io: IoServer, session: QuizSession): void {
   if (session.state !== "question") return;
   clearTimer(session);
@@ -119,12 +129,14 @@ function revealQuestion(io: IoServer, session: QuizSession): void {
     if (answer) {
       player.score += answer.score;
     }
+    const distanceKm = answer ? distanceForGeoGuess(question, answer.value) : undefined;
     return {
       playerId: player.id,
       value: answer?.value ?? null,
       score: answer?.score ?? 0,
       correct: answer?.correct ?? false,
       totalScore: player.score,
+      ...(distanceKm !== undefined ? { distanceKm } : {}),
     };
   });
 
