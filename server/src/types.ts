@@ -1,6 +1,4 @@
 // Shared domain types for quiz sessions, questions and players.
-// Kept intentionally small for the initial scaffold; the realtime engine
-// (see GitHub issue "Realtime quiz engine") fleshes out session behavior.
 
 export type QuestionType = "number" | "geo" | "fuzzy-text";
 
@@ -58,6 +56,23 @@ export interface Player {
   socketId: string | null;
   connected: boolean;
   score: number;
+  /** Set while a disconnected player's grace period is running; cleared on reconnect. */
+  graceTimeout: NodeJS.Timeout | null;
+}
+
+/** A player's recorded answer for the current question, scored on submission. */
+export interface AnswerRecord {
+  playerId: string;
+  value: unknown;
+  score: number;
+  correct: boolean;
+  submittedAt: number;
+}
+
+export interface QuestionTimer {
+  endsAt: number;
+  timeout: NodeJS.Timeout;
+  interval: NodeJS.Timeout;
 }
 
 export interface QuizSession {
@@ -70,4 +85,8 @@ export interface QuizSession {
   questionSet: QuestionSet | null;
   players: Map<string, Player>;
   createdAt: number;
+  /** Answers for the question currently in progress; reset each time a new question starts. */
+  currentAnswers: Map<string, AnswerRecord>;
+  /** Server-owned countdown for the question currently in progress, if any. */
+  timer: QuestionTimer | null;
 }

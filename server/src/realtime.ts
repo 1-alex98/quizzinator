@@ -1,20 +1,17 @@
 import type { Server as HttpServer } from "node:http";
 import { Server } from "socket.io";
+import { registerQuizEngine } from "./quizEngine.js";
+import type { ClientToServerEvents, ServerToClientEvents } from "./protocol.js";
 
-// Thin bootstrap for the realtime layer. The actual quiz state machine
-// (join, start-question, submit-answer, reveal, timer sync, reconnect
-// handling) is built out in the "Realtime quiz engine" issue — this just
-// wires the transport so TV and mobile clients have something to connect to.
-export function createRealtimeServer(httpServer: HttpServer): Server {
-  const io = new Server(httpServer, {
+// Transport bootstrap: creates the Socket.IO server and hands it to the
+// quiz engine, which owns the join/start/answer/reveal event protocol and
+// the session state machine.
+export function createRealtimeServer(httpServer: HttpServer): Server<ClientToServerEvents, ServerToClientEvents> {
+  const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     cors: { origin: "*" },
   });
 
-  io.on("connection", (socket) => {
-    socket.on("disconnect", () => {
-      // Reconnect / grace-period handling arrives with the quiz engine.
-    });
-  });
+  registerQuizEngine(io);
 
   return io;
 }
