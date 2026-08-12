@@ -8,7 +8,7 @@ single ephemeral event.
 ## Roles / screens
 
 - **Host / TV screen** (`/host/:sessionId`) — big-screen view: lobby with a
-  join link + short code (and a QR code, once added), the current question,
+  join link + short code and a QR code, the current question,
   a countdown timer, and the leaderboard between questions. This is the
   shared "public" view everyone in the room watches.
 - **Mobile participant app** (`/play/:code`) — the phone UI each player uses
@@ -100,7 +100,10 @@ event protocol is defined by the realtime-engine issue, not this scaffold.
 - **Testing**: Vitest in both workspaces (+ Supertest for the Express API,
   Testing Library for React components).
 - **CI**: GitHub Actions (`.github/workflows/ci.yml`) runs `npm ci`, lint
-  (`tsc --noEmit`), test, and build on every push/PR.
+  (`tsc --noEmit`), test, and build on every push/PR. A separate workflow
+  (`.github/workflows/docker-publish.yml`) builds and pushes the Docker
+  image, but only when a GitHub Release is published (see Deployment
+  below) — not on every push to `main`.
 - **Workflow**: Claude opens a PR for any change rather than pushing
   directly to `main`.
 
@@ -114,19 +117,24 @@ runtime image (e.g. `node:20-alpine`) containing only `node_modules`
 `PORT` is read from the environment; it defaults to `3001` if unset,
 matching local dev.
 
-CI/CD (GitHub Actions) builds this image on every push to `main` and
-pushes it to the **GitHub Container Registry** (`ghcr.io/1-alex98/quizzinator`),
-tagged with the commit SHA and `latest`, authenticated with the workflow's
+CI/CD (GitHub Actions, `.github/workflows/docker-publish.yml`) builds this
+image and pushes it to the **GitHub Container Registry**
+(`ghcr.io/1-alex98/quizzinator`) only when a **GitHub Release is
+published** — not on every push to `main` — tagged with the release's
+semver tag (e.g. `v1.2.3`) and `latest`, authenticated with the workflow's
 built-in `GITHUB_TOKEN` (`packages: write` permission) — no separate
-registry account or secret to manage. Deploying anywhere (a home server,
-any other Docker host) is then just `docker run -p 3001:3001
-ghcr.io/1-alex98/quizzinator:latest` — no code changes needed, just more
-RAM/CPU and, optionally, a mounted volume for `server/data/`.
+registry account or secret to manage. Cutting a release means tagging a
+commit on `main` as `vX.Y.Z` and publishing a GitHub Release from it.
+Deploying anywhere (a home server, any other Docker host) is then just
+`docker run -p 8080:8080 ghcr.io/1-alex98/quizzinator:latest` — the image
+sets `PORT=8080` by default (override with `-e PORT=...` for a different
+port) — no code changes needed, just more RAM/CPU and, optionally, a
+mounted volume for `server/data/`.
 
 The host's shareable link is `<deployed-origin>/play/<code>` — generated
 from the short join code returned when a session is created
 (`POST /api/sessions`), so the host can copy/share it however they like
-(text, AirDrop, a displayed QR code once added) without a separate link
+(text, AirDrop, a displayed QR code) without a separate link
 shortener.
 
 ## Repo layout
@@ -144,10 +152,12 @@ server/
 client/
   src/
     main.tsx            # router: /, /host/:sessionId, /play/:code, /admin
-    views/               # one component per route (placeholders for now)
+    views/               # one component per route
     lib/socket.ts         # shared Socket.IO client
     styles.css            # design tokens + Material Symbols setup
-.github/workflows/ci.yml
+Dockerfile              # multi-stage build -> small node:20-alpine runtime image
+.dockerignore
+.github/workflows/ci.yml # lint/test/build, then build+push the Docker image to GHCR
 ```
 
 ## Local development
@@ -159,15 +169,12 @@ npm run dev     # runs the Express API (3001) and Vite dev server (5173) togethe
                  # only ever talks to one origin, same as production
 npm test         # server + client test suites
 npm run build     # production build (client bundle, then server tsc)
-npm start          # runs the production build (what Render/the host server run)
+npm start          # runs the production build (what the Docker image runs)
 ```
 
-## Current status / what's left
+## Current status
 
-This scaffold wires up the routing, transport, and a couple of REST
-endpoints (`GET /api/health`, `POST /api/sessions`,
-`GET /api/sessions/by-code/:code`) but **no gameplay yet**. The remaining
-work is tracked as GitHub issues:
+All gameplay, the question-set import pipeline, and CI/CD are implemented:
 
 1. Realtime quiz engine — session state machine, Socket.IO event protocol,
    server-driven timer, reconnect/rejoin handling.
@@ -177,5 +184,6 @@ work is tracked as GitHub issues:
    matching, per-phase mobile screens, TV lobby/leaderboard.
 4. Question set import pipeline — ZIP/JSON upload endpoint, schema
    validation, zip-slip-safe extraction, image serving, admin upload UI.
-5. CI/CD + deployment — build and push a minimal Docker image to the
-   GitHub Container Registry from GitHub Actions, host share-link/QR flow.
+5. CI/CD + deployment — CI builds and pushes a Docker image to the GitHub
+   Container Registry on every push to `main`; the host lobby screen shows
+   the shareable join link plus a QR code.
