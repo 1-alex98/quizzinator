@@ -1,0 +1,11 @@
+node_modules
+**/node_modules
+**/dist
+server/data
+.git
+.github
+*.log
+.env
+.env.local
+client/src/__tests__
+server/src/__tests__

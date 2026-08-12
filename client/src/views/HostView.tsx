@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { QRCodeSVG } from "qrcode.react";
 import { getSocket } from "../lib/socket.js";
 import { GeoRevealMap } from "../components/GeoRevealMap.js";
 import { QuestionPrompt } from "../components/QuestionPrompt.js";
@@ -193,6 +194,9 @@ export function HostView() {
       </span>
       <h1>Join at {joinUrl}</h1>
       <p className="card">Code: {code}</p>
+      <div className="join-qr card">
+        <QRCodeSVG value={joinUrl} size={180} marginSize={2} />
+      </div>
       <p>
         {players.length} player{players.length === 1 ? "" : "s"} joined
       </p>

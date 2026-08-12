@@ -101,6 +101,13 @@ body {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 
+/* QR codes need light modules on a light background to stay scannable, so
+   this overrides the card's otherwise-dark surface. */
+.join-qr {
+  background: #ffffff;
+  display: inline-flex;
+}
+
 /* Shared question prompt + optional image (mobile answer screen, host
    question/reveal screens). */
 .question-prompt {

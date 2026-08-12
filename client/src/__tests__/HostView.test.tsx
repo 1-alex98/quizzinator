@@ -76,6 +76,7 @@ describe("HostView", () => {
     expect(screen.getByText("Code: ABCDE")).toBeTruthy();
     expect(screen.getByText("1 player joined")).toBeTruthy();
     expect(screen.getByText("Start quiz")).toBeTruthy();
+    expect(document.querySelector(".join-qr svg")).toBeTruthy();
   });
 
   it("shows an error when the session can't be found", () => {
