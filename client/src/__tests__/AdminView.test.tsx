@@ -1,0 +1,69 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { AdminView } from "../views/AdminView.js";
+
+const fetchMock = vi.fn();
+
+function renderAdmin() {
+  return render(
+    <MemoryRouter initialEntries={["/admin"]}>
+      <Routes>
+        <Route path="/admin" element={<AdminView />} />
+        <Route path="/host/:sessionId" element={<div>Host screen</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+describe("AdminView", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  it("creates a session, attaches the built-in test set, and navigates to the host screen", async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ id: "s1", code: "ABCDE" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) });
+
+    renderAdmin();
+    fireEvent.click(screen.getByText("Start quiz with test data"));
+
+    await waitFor(() => expect(screen.getByText("Host screen")).toBeTruthy());
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/sessions", { method: "POST" });
+    const [url, options] = fetchMock.mock.calls[1];
+    expect(url).toBe("/api/sessions/s1/question-set");
+    expect(options.method).toBe("PUT");
+
+    const body = JSON.parse(options.body);
+    expect(body.questions.map((q: { type: string }) => q.type)).toEqual(["number", "geo", "fuzzy-text"]);
+  });
+
+  it("shows an error if the session can't be created", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false });
+
+    renderAdmin();
+    fireEvent.click(screen.getByText("Start quiz with test data"));
+
+    await waitFor(() => expect(screen.getByText("Could not create the session.")).toBeTruthy());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an error if attaching the question set fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ id: "s1", code: "ABCDE" }) })
+      .mockResolvedValueOnce({ ok: false });
+
+    renderAdmin();
+    fireEvent.click(screen.getByText("Start quiz with test data"));
+
+    await waitFor(() => expect(screen.getByText("Could not attach the test question set.")).toBeTruthy());
+  });
+});

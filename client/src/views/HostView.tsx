@@ -16,9 +16,13 @@ import type {
 } from "../lib/protocol.js";
 
 // Big-screen view: lobby (join link/code + player list), the live question
-// with a synced countdown, the reveal, and the leaderboard between
-// questions. Phase-specific visual polish lands with the mobile/TV screen
-// polish issue; this wires the state machine end to end.
+// with a synced countdown, the reveal (per-type correct answer + a
+// per-question leaderboard delta), and the final leaderboard.
+
+// Large rooms (~20 players) would otherwise overflow the single-screen,
+// no-scroll layout - show only the top rows plus a "+N more" summary.
+const MAX_VISIBLE_PLAYERS = 10;
+
 export function HostView() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [error, setError] = useState<string | null>(null);
@@ -143,6 +147,9 @@ export function HostView() {
     );
   }
 
+  const revealDeltas =
+    revealed && new Map(revealed.results.map((result) => [result.playerId, result.score]));
+
   if (phase === "question" && question) {
     return (
       <div className="screen">
@@ -170,7 +177,7 @@ export function HostView() {
         <QuestionPrompt question={question.question} />
         <QuestionRevealDetail question={question.question} revealed={revealed} players={players} />
         <h1>Leaderboard</h1>
-        <Leaderboard players={revealed.leaderboard} />
+        <Leaderboard players={revealed.leaderboard} deltas={revealDeltas ?? undefined} />
         <button className="btn" onClick={nextQuestion}>
           <span className="material-symbols-rounded">skip_next</span>
           Next question
@@ -189,12 +196,15 @@ export function HostView() {
       <p>
         {players.length} player{players.length === 1 ? "" : "s"} joined
       </p>
-      <ul>
-        {players.map((p) => (
+      <ul className="player-list">
+        {players.slice(0, MAX_VISIBLE_PLAYERS).map((p) => (
           <li key={p.id}>
             {p.name} {p.connected ? "" : "(disconnected)"}
           </li>
         ))}
+        {players.length > MAX_VISIBLE_PLAYERS && (
+          <li className="list-more">+{players.length - MAX_VISIBLE_PLAYERS} more</li>
+        )}
       </ul>
       <button className="btn" onClick={startQuiz}>
         <span className="material-symbols-rounded">play_arrow</span>
@@ -207,21 +217,34 @@ export function HostView() {
   );
 }
 
-function Leaderboard({ players }: { players: PublicPlayer[] }) {
+function Leaderboard({
+  players,
+  deltas,
+}: {
+  players: PublicPlayer[];
+  /** Points gained this round, keyed by player id. Only shown during the reveal phase. */
+  deltas?: Map<string, number>;
+}) {
+  const visible = players.slice(0, MAX_VISIBLE_PLAYERS);
+  const hiddenCount = players.length - visible.length;
   return (
-    <ol>
-      {players.map((p) => (
+    <ol className="leaderboard">
+      {visible.map((p) => (
         <li key={p.id}>
           {p.name} — {p.score}
+          {deltas?.has(p.id) && <span className="leaderboard__delta"> +{deltas.get(p.id)}</span>}
         </li>
       ))}
+      {hiddenCount > 0 && (
+        <li className="list-more">
+          +{hiddenCount} more player{hiddenCount === 1 ? "" : "s"}
+        </li>
+      )}
     </ol>
   );
 }
 
-// Per-type "correct answer" display for the reveal phase: fuzzy-text has no
-// widget of its own yet (lands with issue #3), so it falls through to just
-// the leaderboard.
+// Per-type "correct answer" display for the reveal phase.
 function QuestionRevealDetail({
   question,
   revealed,
@@ -255,6 +278,24 @@ function QuestionRevealDetail({
           {revealed.results.map((result: AnswerResult) => (
             <li key={result.playerId}>
               {nameFor(result.playerId)}: {String(result.value)} — +{result.score}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  if (question.type === "fuzzy-text") {
+    const correct = revealed.correctAnswer as { acceptedAnswers: string[] };
+    return (
+      <div className="card reveal-fuzzy">
+        <p className="reveal-fuzzy__answer">
+          Accepted answer{correct.acceptedAnswers.length > 1 ? "s" : ""}: {correct.acceptedAnswers.join(", ")}
+        </p>
+        <ul className="reveal-fuzzy__list">
+          {revealed.results.map((result: AnswerResult) => (
+            <li key={result.playerId}>
+              {nameFor(result.playerId)}: {result.value ? String(result.value) : "(no answer)"} — +{result.score}
             </li>
           ))}
         </ul>

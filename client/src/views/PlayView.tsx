@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { getSocket } from "../lib/socket.js";
+import { FuzzyTextAnswerInput } from "../components/FuzzyTextAnswerInput.js";
 import { GeoMapInput, type GeoGuess } from "../components/GeoMapInput.js";
 import { NumberAnswerInput } from "../components/NumberAnswerInput.js";
 import { QuestionPrompt } from "../components/QuestionPrompt.js";
 import type {
   AnswerResult,
   LeaderboardPayload,
+  PublicPlayer,
   PublicQuestion,
   QuestionRevealedPayload,
   QuestionShowPayload,
@@ -155,12 +157,19 @@ export function PlayView() {
         />
       );
     }
+    const canSubmit = question.question.type !== "fuzzy-text" || answerValue.trim().length > 0;
+    const doSubmit = () => canSubmit && submitAnswer(parseAnswer(question.question, answerValue));
     return (
       <div className="screen">
         <p>{remainingSec ?? question.timeLimitSec}s left</p>
         <QuestionPrompt question={question.question} />
-        <AnswerInput question={question.question} value={answerValue} onChange={setAnswerValue} />
-        <button className="btn" onClick={() => submitAnswer(parseAnswer(question.question, answerValue))}>
+        <AnswerInput
+          question={question.question}
+          value={answerValue}
+          onChange={setAnswerValue}
+          onSubmit={doSubmit}
+        />
+        <button className="btn" disabled={!canSubmit} onClick={doSubmit}>
           Submit
         </button>
       </div>
@@ -180,29 +189,54 @@ export function PlayView() {
 
   if (phase === "revealed") {
     const mine = playerId ? revealed?.results.find((r: AnswerResult) => r.playerId === playerId) : undefined;
+    const rank = rankOf(revealed?.leaderboard, playerId);
     return (
       <div className="screen">
         <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
           {mine?.correct ? "check_circle" : "cancel"}
         </span>
         <h1>{mine ? `+${mine.score} points` : "Waiting for next question…"}</h1>
+        {rank && (
+          <p className="rank-badge">
+            <span className="material-symbols-rounded">military_tech</span>
+            {`Rank #${rank.position} of ${rank.total}`}
+          </p>
+        )}
       </div>
     );
   }
 
   if (phase === "ended") {
     const mine = ended?.players.find((p) => p.id === playerId);
+    const rank = rankOf(ended?.players, playerId);
     return (
       <div className="screen">
         <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
           emoji_events
         </span>
         <h1>Final score: {mine?.score ?? 0}</h1>
+        {rank && (
+          <p className="rank-badge">
+            <span className="material-symbols-rounded">military_tech</span>
+            {`Rank #${rank.position} of ${rank.total}`}
+          </p>
+        )}
       </div>
     );
   }
 
   return null;
+}
+
+/** This player's 1-based standing within a leaderboard already sorted by score descending. */
+function rankOf(
+  leaderboard: PublicPlayer[] | undefined,
+  playerId: string | null,
+): { position: number; total: number } | undefined {
+  if (!leaderboard || !playerId) return undefined;
+  const index = leaderboard.findIndex((p) => p.id === playerId);
+  if (index < 0) return undefined;
+  return { position: index + 1, total: leaderboard.length };
 }
 
 function defaultAnswerFor(question: PublicQuestion): string {
@@ -219,10 +253,12 @@ function AnswerInput({
   question,
   value,
   onChange,
+  onSubmit,
 }: {
   question: PublicQuestion;
   value: string;
   onChange: (value: string) => void;
+  onSubmit: () => void;
 }) {
   if (question.type === "number") {
     return (
@@ -233,5 +269,5 @@ function AnswerInput({
       />
     );
   }
-  return <input type="text" value={value} onChange={(e) => onChange(e.target.value)} />;
+  return <FuzzyTextAnswerInput value={value} onChange={onChange} onSubmit={onSubmit} />;
 }

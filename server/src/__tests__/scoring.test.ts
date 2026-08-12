@@ -109,4 +109,19 @@ describe("scoreAnswer for fuzzy-text questions", () => {
   it("rejects an empty answer", () => {
     expect(scoreAnswer(fuzzyQuestion, "")).toEqual({ score: 0, correct: false });
   });
+
+  it("ignores accents/diacritics", () => {
+    const question: FuzzyTextQuestion = { ...fuzzyQuestion, acceptedAnswers: ["Beyonce"] };
+    expect(scoreAnswer(question, "Beyoncé")).toEqual({ score: 100, correct: true });
+  });
+
+  it("collapses extra internal whitespace", () => {
+    expect(scoreAnswer(fuzzyQuestion, "  Marie   Curie  ")).toEqual({ score: 100, correct: true });
+  });
+
+  it("tolerates a small typo above the threshold", () => {
+    const result = scoreAnswer(fuzzyQuestion, "Marie Curei");
+    expect(result.correct).toBe(true);
+    expect(result.score).toBe(100);
+  });
 });

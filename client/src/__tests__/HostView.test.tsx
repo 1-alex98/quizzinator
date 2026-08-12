@@ -165,4 +165,157 @@ describe("HostView", () => {
     expect(screen.getByTestId("correct-pin")).toBeTruthy();
     expect(screen.getByTestId("guess-pin")).toBeTruthy();
   });
+
+  it("shows the accepted answers and per-player guesses on a fuzzy-text reveal", () => {
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "host:join") {
+        ack({
+          ok: true,
+          data: {
+            sessionId: "s1",
+            code: "ABCDE",
+            state: "lobby",
+            currentQuestionIndex: -1,
+            totalQuestions: 1,
+            players: [{ id: "p1", name: "Alice", connected: true, score: 0 }],
+          },
+        });
+      }
+    });
+    const handlers = captureSocketHandlers();
+    renderAt("s1");
+
+    handlers.fire("question:show", {
+      question: { id: "q1", type: "fuzzy-text", prompt: "Who?", points: 100 },
+      index: 0,
+      total: 1,
+      endsAt: Date.now() + 30_000,
+      timeLimitSec: 30,
+    });
+
+    handlers.fire("question:revealed", {
+      index: 0,
+      correctAnswer: { acceptedAnswers: ["Marie Curie"] },
+      results: [{ playerId: "p1", value: "marie curie", score: 100, correct: true, totalScore: 100 }],
+      leaderboard: [{ id: "p1", name: "Alice", connected: true, score: 100 }],
+    });
+
+    expect(screen.getByText("Accepted answer: Marie Curie")).toBeTruthy();
+    expect(screen.getByText("Alice: marie curie — +100")).toBeTruthy();
+  });
+
+  it("shows the per-question point delta alongside each player's total on reveal", () => {
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "host:join") {
+        ack({
+          ok: true,
+          data: {
+            sessionId: "s1",
+            code: "ABCDE",
+            state: "lobby",
+            currentQuestionIndex: -1,
+            totalQuestions: 1,
+            players: [{ id: "p1", name: "Alice", connected: true, score: 0 }],
+          },
+        });
+      }
+    });
+    const handlers = captureSocketHandlers();
+    renderAt("s1");
+
+    handlers.fire("question:show", {
+      question: { id: "q1", type: "number", prompt: "How many?", points: 100, min: 0, max: 100, step: 1 },
+      index: 0,
+      total: 1,
+      endsAt: Date.now() + 30_000,
+      timeLimitSec: 30,
+    });
+
+    handlers.fire("question:revealed", {
+      index: 0,
+      correctAnswer: { correctValue: 50 },
+      results: [{ playerId: "p1", value: 42, score: 80, correct: false, totalScore: 80 }],
+      leaderboard: [{ id: "p1", name: "Alice", connected: true, score: 80 }],
+    });
+
+    expect(screen.getByText("Alice — 80")).toBeTruthy();
+    expect(screen.getByText("+80")).toBeTruthy();
+  });
+
+  it("truncates a large lobby player list with a summary", () => {
+    const players = Array.from({ length: 20 }, (_, i) => ({
+      id: `p${i}`,
+      name: `Player ${i}`,
+      connected: true,
+      score: 0,
+    }));
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "host:join") {
+        ack({
+          ok: true,
+          data: {
+            sessionId: "s1",
+            code: "ABCDE",
+            state: "lobby",
+            currentQuestionIndex: -1,
+            totalQuestions: 0,
+            players,
+          },
+        });
+      }
+    });
+
+    const { container } = renderAt("s1");
+
+    expect(screen.getByText("20 players joined")).toBeTruthy();
+    expect(container.querySelectorAll(".player-list li")).toHaveLength(11);
+    expect(screen.getByText("+10 more")).toBeTruthy();
+  });
+
+  it("truncates a large leaderboard on reveal with a summary", () => {
+    const players = Array.from({ length: 20 }, (_, i) => ({
+      id: `p${i}`,
+      name: `Player ${i}`,
+      connected: true,
+      score: 0,
+    }));
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "host:join") {
+        ack({
+          ok: true,
+          data: {
+            sessionId: "s1",
+            code: "ABCDE",
+            state: "lobby",
+            currentQuestionIndex: -1,
+            totalQuestions: 1,
+            players,
+          },
+        });
+      }
+    });
+    const handlers = captureSocketHandlers();
+    const { container } = renderAt("s1");
+
+    handlers.fire("question:show", {
+      question: { id: "q1", type: "number", prompt: "How many?", points: 100, min: 0, max: 100, step: 1 },
+      index: 0,
+      total: 1,
+      endsAt: Date.now() + 30_000,
+      timeLimitSec: 30,
+    });
+
+    const results = players.map((p, i) => ({ playerId: p.id, value: i, score: i, correct: false, totalScore: i }));
+    const leaderboard = players.map((p, i) => ({ ...p, score: i })).sort((a, b) => b.score - a.score);
+
+    handlers.fire("question:revealed", {
+      index: 0,
+      correctAnswer: { correctValue: 50 },
+      results,
+      leaderboard,
+    });
+
+    expect(container.querySelectorAll(".leaderboard li")).toHaveLength(11);
+    expect(screen.getByText("+10 more players")).toBeTruthy();
+  });
 });

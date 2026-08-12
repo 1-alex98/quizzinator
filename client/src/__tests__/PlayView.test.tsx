@@ -185,6 +185,48 @@ describe("PlayView", () => {
     );
   });
 
+  it("renders a text input for a fuzzy-text question and disables submit until non-empty", () => {
+    joinAndReachAnswering("ABCDE", {
+      id: "q3",
+      type: "fuzzy-text",
+      prompt: "Who?",
+      points: 100,
+    });
+
+    const submit = screen.getByText("Submit").closest("button") as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+
+    const input = screen.getByPlaceholderText("Type your answer…");
+    fireEvent.change(input, { target: { value: "Marie Curie" } });
+    expect(submit.disabled).toBe(false);
+
+    fireEvent.click(submit);
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "answer:submit",
+      { sessionId: "s1", playerId: "p1", value: "Marie Curie" },
+      expect.any(Function),
+    );
+  });
+
+  it("submits a fuzzy-text answer on Enter", () => {
+    joinAndReachAnswering("ABCDE", {
+      id: "q3",
+      type: "fuzzy-text",
+      prompt: "Who?",
+      points: 100,
+    });
+
+    const input = screen.getByPlaceholderText("Type your answer…");
+    fireEvent.change(input, { target: { value: "Marie Curie" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "answer:submit",
+      { sessionId: "s1", playerId: "p1", value: "Marie Curie" },
+      expect.any(Function),
+    );
+  });
+
   it("toggles the prompt overlay on the geo screen without leaving the map", () => {
     joinAndReachAnswering("ABCDE", {
       id: "q2",
@@ -197,5 +239,56 @@ describe("PlayView", () => {
     expect(screen.queryByText("Where is this?")).toBeNull();
     fireEvent.click(screen.getByText("Show question"));
     expect(screen.getByText("Where is this?")).toBeTruthy();
+  });
+
+  it("shows the player's rank after a question reveal", () => {
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "player:join") {
+        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby" } });
+      }
+    });
+    const handlers = captureSocketHandlers();
+    renderAt("ABCDE");
+    fireEvent.change(screen.getByPlaceholderText("Your name"), { target: { value: "Alice" } });
+    fireEvent.click(screen.getByText("Join"));
+
+    act(() => {
+      handlers.fire("question:revealed", {
+        index: 0,
+        correctAnswer: { correctValue: 50 },
+        results: [{ playerId: "p1", value: 42, score: 80, correct: false, totalScore: 80 }],
+        leaderboard: [
+          { id: "p2", name: "Bob", connected: true, score: 120 },
+          { id: "p1", name: "Alice", connected: true, score: 80 },
+        ],
+      });
+    });
+
+    expect(screen.getByText("+80 points")).toBeTruthy();
+    expect(screen.getByText("Rank #2 of 2")).toBeTruthy();
+  });
+
+  it("shows the player's final rank on the ended screen", () => {
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "player:join") {
+        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby" } });
+      }
+    });
+    const handlers = captureSocketHandlers();
+    renderAt("ABCDE");
+    fireEvent.change(screen.getByPlaceholderText("Your name"), { target: { value: "Alice" } });
+    fireEvent.click(screen.getByText("Join"));
+
+    act(() => {
+      handlers.fire("session:ended", {
+        players: [
+          { id: "p2", name: "Bob", connected: true, score: 200 },
+          { id: "p1", name: "Alice", connected: true, score: 150 },
+        ],
+      });
+    });
+
+    expect(screen.getByText("Final score: 150")).toBeTruthy();
+    expect(screen.getByText("Rank #2 of 2")).toBeTruthy();
   });
 });
