@@ -18,6 +18,11 @@ import type {
 // Big-screen view: lobby (join link/code + player list), the live question
 // with a synced countdown, the reveal (per-type correct answer + a
 // per-question leaderboard delta), and the final leaderboard.
+
+// Large rooms (~20 players) would otherwise overflow the single-screen,
+// no-scroll layout - show only the top rows plus a "+N more" summary.
+const MAX_VISIBLE_PLAYERS = 10;
+
 export function HostView() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [error, setError] = useState<string | null>(null);
@@ -191,12 +196,15 @@ export function HostView() {
       <p>
         {players.length} player{players.length === 1 ? "" : "s"} joined
       </p>
-      <ul>
-        {players.map((p) => (
+      <ul className="player-list">
+        {players.slice(0, MAX_VISIBLE_PLAYERS).map((p) => (
           <li key={p.id}>
             {p.name} {p.connected ? "" : "(disconnected)"}
           </li>
         ))}
+        {players.length > MAX_VISIBLE_PLAYERS && (
+          <li className="list-more">+{players.length - MAX_VISIBLE_PLAYERS} more</li>
+        )}
       </ul>
       <button className="btn" onClick={startQuiz}>
         <span className="material-symbols-rounded">play_arrow</span>
@@ -217,14 +225,21 @@ function Leaderboard({
   /** Points gained this round, keyed by player id. Only shown during the reveal phase. */
   deltas?: Map<string, number>;
 }) {
+  const visible = players.slice(0, MAX_VISIBLE_PLAYERS);
+  const hiddenCount = players.length - visible.length;
   return (
     <ol className="leaderboard">
-      {players.map((p) => (
+      {visible.map((p) => (
         <li key={p.id}>
           {p.name} — {p.score}
           {deltas?.has(p.id) && <span className="leaderboard__delta"> +{deltas.get(p.id)}</span>}
         </li>
       ))}
+      {hiddenCount > 0 && (
+        <li className="list-more">
+          +{hiddenCount} more player{hiddenCount === 1 ? "" : "s"}
+        </li>
+      )}
     </ol>
   );
 }

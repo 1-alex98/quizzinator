@@ -8,6 +8,7 @@ import { QuestionPrompt } from "../components/QuestionPrompt.js";
 import type {
   AnswerResult,
   LeaderboardPayload,
+  PublicPlayer,
   PublicQuestion,
   QuestionRevealedPayload,
   QuestionShowPayload,
@@ -188,29 +189,54 @@ export function PlayView() {
 
   if (phase === "revealed") {
     const mine = playerId ? revealed?.results.find((r: AnswerResult) => r.playerId === playerId) : undefined;
+    const rank = rankOf(revealed?.leaderboard, playerId);
     return (
       <div className="screen">
         <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
           {mine?.correct ? "check_circle" : "cancel"}
         </span>
         <h1>{mine ? `+${mine.score} points` : "Waiting for next question…"}</h1>
+        {rank && (
+          <p className="rank-badge">
+            <span className="material-symbols-rounded">military_tech</span>
+            {`Rank #${rank.position} of ${rank.total}`}
+          </p>
+        )}
       </div>
     );
   }
 
   if (phase === "ended") {
     const mine = ended?.players.find((p) => p.id === playerId);
+    const rank = rankOf(ended?.players, playerId);
     return (
       <div className="screen">
         <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
           emoji_events
         </span>
         <h1>Final score: {mine?.score ?? 0}</h1>
+        {rank && (
+          <p className="rank-badge">
+            <span className="material-symbols-rounded">military_tech</span>
+            {`Rank #${rank.position} of ${rank.total}`}
+          </p>
+        )}
       </div>
     );
   }
 
   return null;
+}
+
+/** This player's 1-based standing within a leaderboard already sorted by score descending. */
+function rankOf(
+  leaderboard: PublicPlayer[] | undefined,
+  playerId: string | null,
+): { position: number; total: number } | undefined {
+  if (!leaderboard || !playerId) return undefined;
+  const index = leaderboard.findIndex((p) => p.id === playerId);
+  if (index < 0) return undefined;
+  return { position: index + 1, total: leaderboard.length };
 }
 
 function defaultAnswerFor(question: PublicQuestion): string {

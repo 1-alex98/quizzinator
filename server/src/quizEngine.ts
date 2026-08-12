@@ -55,6 +55,15 @@ function publicPlayers(session: QuizSession): PublicPlayer[] {
     .sort((a, b) => b.score - a.score);
 }
 
+/** Players who can currently submit an answer (excludes disconnected players in their reconnect grace period). */
+function connectedPlayerCount(session: QuizSession): number {
+  let count = 0;
+  for (const player of session.players.values()) {
+    if (player.connected) count++;
+  }
+  return count;
+}
+
 function currentQuestion(session: QuizSession): Question | null {
   if (!session.questionSet) return null;
   return session.questionSet.questions[session.currentQuestionIndex] ?? null;
@@ -312,10 +321,17 @@ export function registerQuizEngine(io: IoServer): void {
       session.currentAnswers.set(playerId, { playerId, value, score, correct, submittedAt: Date.now() });
       ack?.(ok({ score, correct }));
 
+      const total = connectedPlayerCount(session);
       io.to(room(session.id)).emit("question:progress", {
         answered: session.currentAnswers.size,
-        total: session.players.size,
+        total,
       });
+
+      // Skip the rest of the timer once every connected player has answered,
+      // instead of leaving everyone waiting out the full time limit.
+      if (total > 0 && session.currentAnswers.size >= total) {
+        revealQuestion(io, session);
+      }
     });
 
     socket.on("disconnect", () => {

@@ -241,4 +241,81 @@ describe("HostView", () => {
     expect(screen.getByText("Alice — 80")).toBeTruthy();
     expect(screen.getByText("+80")).toBeTruthy();
   });
+
+  it("truncates a large lobby player list with a summary", () => {
+    const players = Array.from({ length: 20 }, (_, i) => ({
+      id: `p${i}`,
+      name: `Player ${i}`,
+      connected: true,
+      score: 0,
+    }));
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "host:join") {
+        ack({
+          ok: true,
+          data: {
+            sessionId: "s1",
+            code: "ABCDE",
+            state: "lobby",
+            currentQuestionIndex: -1,
+            totalQuestions: 0,
+            players,
+          },
+        });
+      }
+    });
+
+    const { container } = renderAt("s1");
+
+    expect(screen.getByText("20 players joined")).toBeTruthy();
+    expect(container.querySelectorAll(".player-list li")).toHaveLength(11);
+    expect(screen.getByText("+10 more")).toBeTruthy();
+  });
+
+  it("truncates a large leaderboard on reveal with a summary", () => {
+    const players = Array.from({ length: 20 }, (_, i) => ({
+      id: `p${i}`,
+      name: `Player ${i}`,
+      connected: true,
+      score: 0,
+    }));
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "host:join") {
+        ack({
+          ok: true,
+          data: {
+            sessionId: "s1",
+            code: "ABCDE",
+            state: "lobby",
+            currentQuestionIndex: -1,
+            totalQuestions: 1,
+            players,
+          },
+        });
+      }
+    });
+    const handlers = captureSocketHandlers();
+    const { container } = renderAt("s1");
+
+    handlers.fire("question:show", {
+      question: { id: "q1", type: "number", prompt: "How many?", points: 100, min: 0, max: 100, step: 1 },
+      index: 0,
+      total: 1,
+      endsAt: Date.now() + 30_000,
+      timeLimitSec: 30,
+    });
+
+    const results = players.map((p, i) => ({ playerId: p.id, value: i, score: i, correct: false, totalScore: i }));
+    const leaderboard = players.map((p, i) => ({ ...p, score: i })).sort((a, b) => b.score - a.score);
+
+    handlers.fire("question:revealed", {
+      index: 0,
+      correctAnswer: { correctValue: 50 },
+      results,
+      leaderboard,
+    });
+
+    expect(container.querySelectorAll(".leaderboard li")).toHaveLength(11);
+    expect(screen.getByText("+10 more players")).toBeTruthy();
+  });
 });
