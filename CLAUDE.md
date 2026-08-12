@@ -61,17 +61,16 @@ yet in this scaffold.
   local disk, *not* held fully in memory — only the parsed question JSON
   (small) lives in memory; images are served from disk via a static route /
   streamed, so a set with many/large images doesn't blow up process RAM.
-- Why this matters for hosting: **Render's free web service tier gives
-  ~512MB RAM, a shared/fractional CPU, and an *ephemeral* disk** — local
-  files (including anything under `server/data/`) are wiped on every
-  redeploy or restart, and the service spins down after ~15 minutes idle
-  (cold start on the next request). None of that is a problem here, because
-  in-memory sessions are equally wiped on restart — the host just re-uploads
-  the question set if that ever happens. A quiz in progress keeps the
-  service busy/warm for its own duration. On the home-server deployment
-  (plenty of RAM, persistent disk, always-on) none of these constraints
-  apply, but the code is written to the tighter Render limits so it works in
-  both places unchanged.
+- Why this matters for hosting: the app ships as a **Docker container with
+  no volumes mounted by default** — anything written to `server/data/` or
+  held in the in-memory session `Map` is wiped whenever the container is
+  recreated (redeploy, restart, host reboot). That's fine here, because a
+  quiz is a single live event: if the container restarts mid-quiz the host
+  just re-uploads the question set and starts again. On the home-server
+  deployment the container can optionally be given a persistent volume for
+  `server/data/` (nice-to-have, not required), but the code makes no
+  assumption that disk or memory survives a restart, so it behaves
+  correctly either way.
 
 ## Realtime transport (decided)
 
@@ -107,11 +106,22 @@ event protocol is defined by the realtime-engine issue, not this scaffold.
 
 ## Deployment (decided)
 
-Render, "Node" native runtime (not a static site + separate API): build
-command `npm run build`, start command `npm start`, single web service.
-`PORT` is read from the environment (Render sets this); locally it defaults
-to `3001`. Eventually redeployed to a home server with the same two
-commands — no code changes needed, just more RAM/CPU and a persistent disk.
+Docker, not a PaaS. A single minimal multi-stage `Dockerfile` at the repo
+root builds the client (Vite) and server (`tsc`), then produces a small
+runtime image (e.g. `node:20-alpine`) containing only `node_modules`
+(production deps), the compiled server `dist/`, and the built
+`client/dist`, running `node server/dist/index.js` as its entrypoint.
+`PORT` is read from the environment; it defaults to `3001` if unset,
+matching local dev.
+
+CI/CD (GitHub Actions) builds this image on every push to `main` and
+pushes it to the **GitHub Container Registry** (`ghcr.io/1-alex98/quizzinator`),
+tagged with the commit SHA and `latest`, authenticated with the workflow's
+built-in `GITHUB_TOKEN` (`packages: write` permission) — no separate
+registry account or secret to manage. Deploying anywhere (a home server,
+any other Docker host) is then just `docker run -p 3001:3001
+ghcr.io/1-alex98/quizzinator:latest` — no code changes needed, just more
+RAM/CPU and, optionally, a mounted volume for `server/data/`.
 
 The host's shareable link is `<deployed-origin>/play/<code>` — generated
 from the short join code returned when a session is created
@@ -167,5 +177,5 @@ work is tracked as GitHub issues:
    matching, per-phase mobile screens, TV lobby/leaderboard.
 4. Question set import pipeline — ZIP/JSON upload endpoint, schema
    validation, zip-slip-safe extraction, image serving, admin upload UI.
-5. CI/CD + deployment — flesh out GitHub Actions as needed, Render service
-   config, host share-link/QR flow.
+5. CI/CD + deployment — build and push a minimal Docker image to the
+   GitHub Container Registry from GitHub Actions, host share-link/QR flow.
