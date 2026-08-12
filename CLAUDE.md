@@ -100,7 +100,10 @@ event protocol is defined by the realtime-engine issue, not this scaffold.
 - **Testing**: Vitest in both workspaces (+ Supertest for the Express API,
   Testing Library for React components).
 - **CI**: GitHub Actions (`.github/workflows/ci.yml`) runs `npm ci`, lint
-  (`tsc --noEmit`), test, and build on every push/PR.
+  (`tsc --noEmit`), test, and build on every push/PR. A separate workflow
+  (`.github/workflows/docker-publish.yml`) builds and pushes the Docker
+  image, but only when a GitHub Release is published (see Deployment
+  below) — not on every push to `main`.
 - **Workflow**: Claude opens a PR for any change rather than pushing
   directly to `main`.
 
@@ -114,14 +117,18 @@ runtime image (e.g. `node:20-alpine`) containing only `node_modules`
 `PORT` is read from the environment; it defaults to `3001` if unset,
 matching local dev.
 
-CI/CD (GitHub Actions) builds this image on every push to `main` and
-pushes it to the **GitHub Container Registry** (`ghcr.io/1-alex98/quizzinator`),
-tagged with the commit SHA and `latest`, authenticated with the workflow's
+CI/CD (GitHub Actions, `.github/workflows/docker-publish.yml`) builds this
+image and pushes it to the **GitHub Container Registry**
+(`ghcr.io/1-alex98/quizzinator`) only when a **GitHub Release is
+published** — not on every push to `main` — tagged with the release's
+semver tag (e.g. `v1.2.3`) and `latest`, authenticated with the workflow's
 built-in `GITHUB_TOKEN` (`packages: write` permission) — no separate
-registry account or secret to manage. Deploying anywhere (a home server,
-any other Docker host) is then just `docker run -p 3001:3001
-ghcr.io/1-alex98/quizzinator:latest` — no code changes needed, just more
-RAM/CPU and, optionally, a mounted volume for `server/data/`.
+registry account or secret to manage. Cutting a release means tagging a
+commit on `main` as `vX.Y.Z` and publishing a GitHub Release from it.
+Deploying anywhere (a home server, any other Docker host) is then just
+`docker run -p 3001:3001 ghcr.io/1-alex98/quizzinator:latest` — no code
+changes needed, just more RAM/CPU and, optionally, a mounted volume for
+`server/data/`.
 
 The host's shareable link is `<deployed-origin>/play/<code>` — generated
 from the short join code returned when a session is created
