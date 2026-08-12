@@ -1,9 +1,8 @@
 import { z } from "zod";
 
-// Validates a QuestionSet (see types.ts) submitted directly as JSON. The
-// full upload pipeline (ZIP extraction, zip-slip protection, local image
-// resolution) lands with the question-set import issue; this schema is
-// reused there for the parsed JSON payload.
+// Validates a QuestionSet (see types.ts). Reused both for JSON submitted
+// directly to PUT /sessions/:id/question-set and for the parsed JSON inside
+// an uploaded .json/.zip in questionSetImport.ts.
 const mediaSchema = z.object({ imageUrl: z.string().min(1).optional() }).optional();
 
 const questionBaseSchema = {
