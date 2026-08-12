@@ -8,7 +8,8 @@ export interface ScoreResult {
 
 const EARTH_RADIUS_KM = 6371;
 
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+/** Great-circle distance between two lat/lng points, in kilometers. */
+export function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
@@ -17,6 +18,13 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/**
+ * Falloff curve: linear from full `points` at zero distance down to 0 at
+ * (or beyond) the question's error tolerance — `question.max - question.min`
+ * for number questions, `question.maxDistanceKm` for geo. A guess exactly at
+ * the tolerance boundary scores 0; anything further also scores 0 (closeness
+ * is clamped, not extrapolated negative).
+ */
 function scoreNumber(question: NumberQuestion, value: unknown): ScoreResult {
   const guess = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(guess)) return { score: 0, correct: false };
@@ -25,6 +33,7 @@ function scoreNumber(question: NumberQuestion, value: unknown): ScoreResult {
   return { score: Math.round(question.points * closeness), correct: guess === question.correctValue };
 }
 
+/** See {@link scoreNumber} for the shared linear falloff curve description. */
 function scoreGeo(question: GeoQuestion, value: unknown): ScoreResult {
   const guess = value as { lat?: unknown; lng?: unknown } | null | undefined;
   const lat = typeof guess?.lat === "number" ? guess.lat : NaN;

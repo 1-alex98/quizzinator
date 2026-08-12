@@ -91,3 +91,135 @@ body {
   padding: var(--space-4);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
+
+/* Shared question prompt + optional image (mobile answer screen, host
+   question/reveal screens). */
+.question-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 100%;
+}
+
+.question-prompt__image {
+  max-width: 100%;
+  max-height: 30vh;
+  border-radius: 16px;
+  object-fit: contain;
+}
+
+.question-prompt__text {
+  margin: 0;
+}
+
+/* Number question slider: large, icon-forward, live value. */
+.number-input {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 320px;
+}
+
+.number-input__icon {
+  color: var(--color-accent);
+}
+
+.number-input__value {
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.number-input__slider {
+  width: 100%;
+  height: var(--space-4);
+  accent-color: var(--color-accent);
+}
+
+.number-input__bounds {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
+
+/* Geo question: full-screen tap-to-place map with a compact overlay header
+   for the prompt, since the map needs all the remaining screen space. */
+.geo-screen {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.geo-screen__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  z-index: 1000;
+}
+
+.geo-screen__timer {
+  padding: var(--space-2) var(--space-3);
+  font-weight: 600;
+}
+
+.geo-screen__prompt {
+  margin: 0 var(--space-3) var(--space-3);
+  z-index: 1000;
+}
+
+.geo-screen__map {
+  flex: 1;
+  width: 100%;
+}
+
+.geo-screen__submit {
+  position: absolute;
+  bottom: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+}
+
+.geo-screen__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Host reveal: correct number answer + per-player guesses. */
+.reveal-number {
+  width: 100%;
+  max-width: 480px;
+}
+
+.reveal-number__answer {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+}
+
+.reveal-number__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  text-align: left;
+}
+
+/* Host reveal: correct location + player guess pins. */
+.geo-reveal__map {
+  width: min(90vw, 640px);
+  height: 40vh;
+  border-radius: 16px;
+  overflow: hidden;
+}

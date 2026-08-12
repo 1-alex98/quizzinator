@@ -44,6 +44,8 @@ export interface AnswerResult {
   score: number;
   correct: boolean;
   totalScore: number;
+  /** How far off a geo guess was, in km. Only present for geo questions with a valid guess. */
+  distanceKm?: number;
 }
 
 export interface QuestionRevealedPayload {

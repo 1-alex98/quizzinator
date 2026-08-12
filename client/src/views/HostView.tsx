@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { getSocket } from "../lib/socket.js";
+import { GeoRevealMap } from "../components/GeoRevealMap.js";
+import { QuestionPrompt } from "../components/QuestionPrompt.js";
 import type {
+  AnswerResult,
   LeaderboardPayload,
   PublicPlayer,
+  PublicQuestion,
   QuestionProgressPayload,
   QuestionRevealedPayload,
   QuestionShowPayload,
@@ -145,7 +149,7 @@ export function HostView() {
         <p>
           Question {question.index + 1} / {question.total}
         </p>
-        <h1>{question.question.prompt}</h1>
+        <QuestionPrompt question={question.question} />
         <p className="card">{remainingSec ?? question.timeLimitSec}s left</p>
         {progress && (
           <p>
@@ -160,9 +164,11 @@ export function HostView() {
     );
   }
 
-  if (phase === "reveal" && revealed) {
+  if (phase === "reveal" && revealed && question) {
     return (
       <div className="screen">
+        <QuestionPrompt question={question.question} />
+        <QuestionRevealDetail question={question.question} revealed={revealed} players={players} />
         <h1>Leaderboard</h1>
         <Leaderboard players={revealed.leaderboard} />
         <button className="btn" onClick={nextQuestion}>
@@ -211,4 +217,50 @@ function Leaderboard({ players }: { players: PublicPlayer[] }) {
       ))}
     </ol>
   );
+}
+
+// Per-type "correct answer" display for the reveal phase: fuzzy-text has no
+// widget of its own yet (lands with issue #3), so it falls through to just
+// the leaderboard.
+function QuestionRevealDetail({
+  question,
+  revealed,
+  players,
+}: {
+  question: PublicQuestion;
+  revealed: QuestionRevealedPayload;
+  players: PublicPlayer[];
+}) {
+  const nameFor = (playerId: string) => players.find((p) => p.id === playerId)?.name ?? "Player";
+
+  if (question.type === "geo") {
+    const correct = revealed.correctAnswer as { correctLat: number; correctLng: number };
+    const playerNames = new Map(players.map((p) => [p.id, p.name]));
+    return (
+      <GeoRevealMap
+        correctLat={correct.correctLat}
+        correctLng={correct.correctLng}
+        results={revealed.results}
+        playerNames={playerNames}
+      />
+    );
+  }
+
+  if (question.type === "number") {
+    const correct = revealed.correctAnswer as { correctValue: number };
+    return (
+      <div className="card reveal-number">
+        <p className="reveal-number__answer">Correct answer: {correct.correctValue}</p>
+        <ul className="reveal-number__list">
+          {revealed.results.map((result: AnswerResult) => (
+            <li key={result.playerId}>
+              {nameFor(result.playerId)}: {String(result.value)} — +{result.score}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  return null;
 }

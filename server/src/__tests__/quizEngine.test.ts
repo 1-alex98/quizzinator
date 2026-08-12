@@ -161,6 +161,44 @@ describe("quiz engine", () => {
     player.disconnect();
   });
 
+  it("includes a computed distanceKm in geo reveal results", async () => {
+    const geoQuestions = [
+      {
+        id: "q-geo",
+        type: "geo",
+        prompt: "Where?",
+        points: 100,
+        timeLimitSec: 30,
+        correctLat: 52.52,
+        correctLng: 13.405,
+        maxDistanceKm: 100,
+      },
+    ];
+    const { sessionId, code } = await createLobby(geoQuestions);
+
+    const host = connect();
+    const player = connect();
+    await Promise.all([waitForEvent(host, "connect" as never), waitForEvent(player, "connect" as never)]);
+    await emitAck(host, "host:join", { sessionId });
+    const joinAck = (await emitAck(player, "player:join", { code, name: "Alice" })) as AckResponse<PlayerJoinAck>;
+    const playerId = (joinAck as { ok: true; data: PlayerJoinAck }).data.playerId;
+
+    const playerSawQuestion = waitForEvent(player, "question:show");
+    await emitAck(host, "session:start", { sessionId });
+    await playerSawQuestion;
+
+    await emitAck(player, "answer:submit", { sessionId, playerId, value: { lat: 52.0, lng: 13.405 } });
+
+    const revealed = waitForEvent(host, "question:revealed") as Promise<QuestionRevealedPayload>;
+    await emitAck(host, "question:reveal", { sessionId });
+    const revealPayload = await revealed;
+
+    expect(revealPayload.results[0].distanceKm).toBeCloseTo(57.85, 0);
+
+    host.disconnect();
+    player.disconnect();
+  });
+
   it("rejects host-only commands from non-host sockets", async () => {
     const { sessionId } = await createLobby(numberQuestions);
     const impostor = connect();
