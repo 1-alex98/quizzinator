@@ -1,8 +1,8 @@
 // Built-in question set covering every question type the app currently
 // supports (number, geo, fuzzy-text). Used by the "start quiz with test
-// data" button in AdminView as a stand-in until the real ZIP/JSON upload
-// pipeline lands (see issue #4). Validated server-side against the same
-// questionSetSchema a real upload would go through.
+// data" button in AdminView as a quick way to try the app without preparing
+// a real upload. Validated server-side against the same questionSetSchema a
+// real upload goes through.
 export const TEST_QUESTION_SET = {
   id: "quizzinator-test-set",
   title: "Quizzinator Test Set",

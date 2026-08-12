@@ -3,6 +3,7 @@ import cors from "cors";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { apiRouter } from "./routes/api.js";
+import { dataDir } from "./questionSetImport.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, "../../client/dist");
@@ -14,6 +15,10 @@ export function createApp(): Express {
   app.use(express.json());
 
   app.use("/api", apiRouter);
+
+  // Images extracted from an uploaded ZIP question set (see
+  // questionSetImport.ts) are streamed from disk, not held in memory.
+  app.use("/uploads", express.static(dataDir));
 
   // In production the client is pre-built and served as static assets by
   // this same Node process (single Render web service, no separate FE host).

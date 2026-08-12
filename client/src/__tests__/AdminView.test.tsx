@@ -64,6 +64,39 @@ describe("AdminView", () => {
     renderAdmin();
     fireEvent.click(screen.getByText("Start quiz with test data"));
 
-    await waitFor(() => expect(screen.getByText("Could not attach the test question set.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Could not attach the question set.")).toBeTruthy());
+  });
+
+  it("uploads a chosen file, then creates and attaches a session from the parsed result", async () => {
+    const parsedSet = { id: "uploaded", title: "Uploaded", questions: [{ id: "q1", type: "number" }] };
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(parsedSet) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ id: "s1", code: "ABCDE" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) });
+
+    renderAdmin();
+    const file = new File(["{}"], "set.json", { type: "application/json" });
+    fireEvent.change(screen.getByLabelText("Question set file"), { target: { files: [file] } });
+
+    await waitFor(() => expect(screen.getByText("Host screen")).toBeTruthy());
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/question-sets", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/sessions", { method: "POST" });
+    const [url, options] = fetchMock.mock.calls[2];
+    expect(url).toBe("/api/sessions/s1/question-set");
+    expect(JSON.parse(options.body)).toEqual(parsedSet);
+  });
+
+  it("shows the server's error message when the uploaded file is rejected", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      json: () => Promise.resolve({ error: "invalid_question_set", message: "Question set failed validation." }),
+    });
+
+    renderAdmin();
+    const file = new File(["{ not json"], "set.json", { type: "application/json" });
+    fireEvent.change(screen.getByLabelText("Question set file"), { target: { files: [file] } });
+
+    await waitFor(() => expect(screen.getByText("Question set failed validation.")).toBeTruthy());
   });
 });
