@@ -27,6 +27,10 @@ RUN npm ci --omit=dev --workspace=server
 FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# Container default differs from the local-dev default (3001, see
+# server/src/index.ts) - override with -e PORT=... at `docker run` if you
+# need a different port.
+ENV PORT=8080
 
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/server/package.json ./server/package.json
@@ -38,5 +42,5 @@ COPY --from=build /app/client/dist ./client/dist
 # CLAUDE.md: no volumes mounted by default, this is wiped on every restart).
 RUN mkdir -p server/data
 
-EXPOSE 3001
+EXPOSE 8080
 CMD ["node", "server/dist/index.js"]

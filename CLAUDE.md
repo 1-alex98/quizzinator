@@ -126,9 +126,10 @@ built-in `GITHUB_TOKEN` (`packages: write` permission) — no separate
 registry account or secret to manage. Cutting a release means tagging a
 commit on `main` as `vX.Y.Z` and publishing a GitHub Release from it.
 Deploying anywhere (a home server, any other Docker host) is then just
-`docker run -p 3001:3001 ghcr.io/1-alex98/quizzinator:latest` — no code
-changes needed, just more RAM/CPU and, optionally, a mounted volume for
-`server/data/`.
+`docker run -p 8080:8080 ghcr.io/1-alex98/quizzinator:latest` — the image
+sets `PORT=8080` by default (override with `-e PORT=...` for a different
+port) — no code changes needed, just more RAM/CPU and, optionally, a
+mounted volume for `server/data/`.
 
 The host's shareable link is `<deployed-origin>/play/<code>` — generated
 from the short join code returned when a session is created
