@@ -22,6 +22,10 @@ html,
 body,
 #root {
   height: 100%;
+  /* Fallback for browsers with a dynamic toolbar (mobile Safari): dvh tracks
+     the actual visible viewport so phase screens never jump or get clipped
+     as the toolbar shows/hides. */
+  height: 100dvh;
   margin: 0;
   /* Mobile & TV views are single-screen: no scrolling per-question. */
   overflow: hidden;
@@ -83,6 +87,11 @@ body {
 
 .btn:active {
   filter: brightness(1.15);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .card {
@@ -222,4 +231,72 @@ body {
   height: 40vh;
   border-radius: 16px;
   overflow: hidden;
+}
+
+/* Fuzzy-text question: large icon-forward pill input, mirrors the
+   icon+value styling of the number slider. */
+.fuzzy-input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 360px;
+  background: var(--color-surface-alt);
+  border-radius: 999px;
+  padding: var(--space-2) var(--space-4);
+}
+
+.fuzzy-input__icon {
+  color: var(--color-accent);
+}
+
+.fuzzy-input__field {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-on-surface);
+  font-size: 1.3rem;
+  padding: var(--space-2) 0;
+  outline: none;
+}
+
+/* Host reveal: accepted answer(s) + per-player guesses for fuzzy-text,
+   mirrors .reveal-number. */
+.reveal-fuzzy {
+  width: 100%;
+  max-width: 480px;
+}
+
+.reveal-fuzzy__answer {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+}
+
+.reveal-fuzzy__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  text-align: left;
+}
+
+/* Leaderboard rows: name + total score, with the delta gained this round
+   shown alongside during the reveal phase. */
+.leaderboard {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.leaderboard__delta {
+  color: var(--color-accent);
+  font-weight: 600;
+  margin-left: var(--space-2);
 }

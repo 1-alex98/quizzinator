@@ -44,11 +44,21 @@ function scoreGeo(question: GeoQuestion, value: unknown): ScoreResult {
   return { score: Math.round(question.points * closeness), correct: distanceKm <= question.maxDistanceKm * 0.01 };
 }
 
+/** Lowercases, strips accents/diacritics, and collapses internal whitespace. */
+function normalizeAnswer(raw: string): string {
+  return raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 function scoreFuzzyText(question: FuzzyTextQuestion, value: unknown): ScoreResult {
-  const guess = typeof value === "string" ? value.trim().toLowerCase() : "";
+  const guess = typeof value === "string" ? normalizeAnswer(value) : "";
   if (!guess) return { score: 0, correct: false };
   const bestSimilarity = question.acceptedAnswers.reduce((best, accepted) => {
-    const normalized = accepted.trim().toLowerCase();
+    const normalized = normalizeAnswer(accepted);
     const maxLen = Math.max(guess.length, normalized.length, 1);
     const similarity = 1 - levenshteinDistance(guess, normalized) / maxLen;
     return Math.max(best, similarity);

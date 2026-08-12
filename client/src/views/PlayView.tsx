@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { getSocket } from "../lib/socket.js";
+import { FuzzyTextAnswerInput } from "../components/FuzzyTextAnswerInput.js";
 import { GeoMapInput, type GeoGuess } from "../components/GeoMapInput.js";
 import { NumberAnswerInput } from "../components/NumberAnswerInput.js";
 import { QuestionPrompt } from "../components/QuestionPrompt.js";
@@ -155,12 +156,19 @@ export function PlayView() {
         />
       );
     }
+    const canSubmit = question.question.type !== "fuzzy-text" || answerValue.trim().length > 0;
+    const doSubmit = () => canSubmit && submitAnswer(parseAnswer(question.question, answerValue));
     return (
       <div className="screen">
         <p>{remainingSec ?? question.timeLimitSec}s left</p>
         <QuestionPrompt question={question.question} />
-        <AnswerInput question={question.question} value={answerValue} onChange={setAnswerValue} />
-        <button className="btn" onClick={() => submitAnswer(parseAnswer(question.question, answerValue))}>
+        <AnswerInput
+          question={question.question}
+          value={answerValue}
+          onChange={setAnswerValue}
+          onSubmit={doSubmit}
+        />
+        <button className="btn" disabled={!canSubmit} onClick={doSubmit}>
           Submit
         </button>
       </div>
@@ -219,10 +227,12 @@ function AnswerInput({
   question,
   value,
   onChange,
+  onSubmit,
 }: {
   question: PublicQuestion;
   value: string;
   onChange: (value: string) => void;
+  onSubmit: () => void;
 }) {
   if (question.type === "number") {
     return (
@@ -233,5 +243,5 @@ function AnswerInput({
       />
     );
   }
-  return <input type="text" value={value} onChange={(e) => onChange(e.target.value)} />;
+  return <FuzzyTextAnswerInput value={value} onChange={onChange} onSubmit={onSubmit} />;
 }

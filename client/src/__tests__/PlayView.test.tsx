@@ -185,6 +185,48 @@ describe("PlayView", () => {
     );
   });
 
+  it("renders a text input for a fuzzy-text question and disables submit until non-empty", () => {
+    joinAndReachAnswering("ABCDE", {
+      id: "q3",
+      type: "fuzzy-text",
+      prompt: "Who?",
+      points: 100,
+    });
+
+    const submit = screen.getByText("Submit").closest("button") as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+
+    const input = screen.getByPlaceholderText("Type your answer…");
+    fireEvent.change(input, { target: { value: "Marie Curie" } });
+    expect(submit.disabled).toBe(false);
+
+    fireEvent.click(submit);
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "answer:submit",
+      { sessionId: "s1", playerId: "p1", value: "Marie Curie" },
+      expect.any(Function),
+    );
+  });
+
+  it("submits a fuzzy-text answer on Enter", () => {
+    joinAndReachAnswering("ABCDE", {
+      id: "q3",
+      type: "fuzzy-text",
+      prompt: "Who?",
+      points: 100,
+    });
+
+    const input = screen.getByPlaceholderText("Type your answer…");
+    fireEvent.change(input, { target: { value: "Marie Curie" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "answer:submit",
+      { sessionId: "s1", playerId: "p1", value: "Marie Curie" },
+      expect.any(Function),
+    );
+  });
+
   it("toggles the prompt overlay on the geo screen without leaving the map", () => {
     joinAndReachAnswering("ABCDE", {
       id: "q2",
