@@ -110,12 +110,16 @@ export function GeoMapInput({
             right: 12,
             zIndex: OVER_MAP,
             p: 2,
-            maxHeight: "50vh",
+            maxHeight: "60vh",
             overflow: "auto",
             textAlign: "center",
           }}
         >
-          <QuestionPrompt question={question} />
+          {/* `panel`, not the usual mobile screen: this card floats over the
+              map the player has to tap, so it hugs its image instead of
+              filling the space - and "Hide image" shrinks it back to a line of
+              text, leaving the map clear without closing the question. */}
+          <QuestionPrompt question={question} variant="panel" />
         </Paper>
       )}
 

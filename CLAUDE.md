@@ -65,6 +65,26 @@ the countdown and is the single source of truth for time remaining (clients
 just render what the server tells them), so the timer shown on the TV and on
 phones can't drift apart even under bad wifi.
 
+**A question's image is sized by what's left, not by a `vh` cap.** The picture
+is the thing the room is squinting at, so on both the TV and the phone it sits
+in a flex frame that claims every pixel the rest of the screen doesn't need —
+countdown, prompt, answer input and buttons keep their intrinsic size, the
+image takes the remainder — and `object-fit: contain` scales it into that
+frame, *up* as well as down. Nothing scrolls, and a screen with a slider and a
+screen with six tap targets each end up with the largest image they can carry
+rather than the same fixed fraction. Two consequences worth knowing:
+- The shadow is a `drop-shadow` **filter**, not `box-shadow`: a contained image
+  only paints part of its box, and a box-shadow would draw a lit rectangle
+  around the empty letterboxed area instead of around the photo.
+- Where the leftover really is scarce (six options on a small phone), the
+  answer input keeps the room it needs to stay tappable and the image gets what
+  remains — so the phone also has **Enlarge**, a full-screen viewer one tap
+  away, next to the existing hide/show toggle. The geo screen's floating
+  "Show question" card is the one place the image *doesn't* fill the space
+  (`variant="panel"`): it sits over the map the player has to tap, so it hugs
+  its image, and hiding the image shrinks the card back to a line of text
+  rather than leaving an empty box over the map.
+
 ## Question set delivery (decided)
 
 A question set is either:
@@ -331,3 +351,7 @@ All gameplay, the question-set import pipeline, and CI/CD are implemented:
    `/admin`, a clickable join link, and the reveal rebuilt as a Material
    answer card (name / guess / points in their own slots) instead of a
    dash-separated string.
+8. Images that fill the screen — the flex-sized question image described
+   under "Question types" above, replacing the 46vh/28vh caps, plus the
+   phone's full-screen "Enlarge" viewer and a geo question panel that
+   shrinks back to the map when its image is hidden.

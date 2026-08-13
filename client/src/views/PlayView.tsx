@@ -290,8 +290,14 @@ export function PlayView() {
     const canSubmit = question.question.type === "number" || answerValue.trim().length > 0;
     const doSubmit = () => canSubmit && submitAnswer(parseAnswer(question.question, answerValue));
     return (
-      <Screen phaseKey={`answering-${question.question.id}`} gap={2} sx={{ justifyContent: "space-between" }}>
-        <Stack alignItems="center" gap={1}>
+      // A tighter frame than the other phases: this is the one screen with an
+      // image on it, and every pixel of padding is a pixel the picture doesn't get.
+      <Screen
+        phaseKey={`answering-${question.question.id}`}
+        gap={2}
+        sx={{ justifyContent: "space-between", px: 2, py: 2 }}
+      >
+        <Stack alignItems="center" gap={1} sx={{ flex: "0 0 auto" }}>
           <OfflineChip online={online} />
           <CountdownRing
             remainingSec={remainingSec ?? question.timeLimitSec}
@@ -300,7 +306,7 @@ export function PlayView() {
           />
         </Stack>
         <QuestionPrompt question={question.question} variant="mobile" />
-        <Stack alignItems="center" gap={3} sx={{ width: "100%" }}>
+        <Stack alignItems="center" gap={3} sx={{ flex: "0 0 auto", width: "100%" }}>
           <AnswerInput
             question={question.question}
             value={answerValue}

@@ -214,8 +214,20 @@ export function HostView() {
     const answeredFraction =
       progress && progress.total > 0 ? (progress.answered / progress.total) * 100 : 0;
     return (
-      <Screen phaseKey={`question-${question.index}`} gap={2} sx={{ justifyContent: "space-between" }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ width: "100%" }}>
+      // Tight padding and a small gap: the header and the footer below are
+      // fixed-size, so everything saved here goes to the image (QuestionPrompt
+      // grows into whatever these two leave behind).
+      <Screen
+        phaseKey={`question-${question.index}`}
+        gap={2}
+        sx={{ justifyContent: "space-between", py: 2.5 }}
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          sx={{ flex: "0 0 auto", width: "100%" }}
+        >
           <Chip
             color="primary"
             variant="outlined"
@@ -230,7 +242,7 @@ export function HostView() {
 
         <QuestionPrompt question={question.question} variant="host" />
 
-        <Stack alignItems="center" gap={1.5} sx={{ width: "min(100%, 640px)" }}>
+        <Stack alignItems="center" gap={1.5} sx={{ flex: "0 0 auto", width: "min(100%, 640px)" }}>
           {progress && (
             <>
               <Typography color="text.secondary">
