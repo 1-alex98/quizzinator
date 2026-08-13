@@ -1,3 +1,6 @@
+import Slider from "@mui/material/Slider";
+import Stack from "@mui/material/Stack";
+import Typography from "@mui/material/Typography";
 import type { PublicQuestion } from "../lib/protocol.js";
 
 type NumberQuestion = Extract<PublicQuestion, { type: "number" }>;
@@ -12,22 +15,37 @@ export function NumberAnswerInput({
   onChange: (value: number) => void;
 }) {
   return (
-    <div className="number-input">
-      <span className="material-symbols-rounded number-input__icon">tune</span>
-      <div className="number-input__value">{value}</div>
-      <input
-        className="number-input__slider"
-        type="range"
+    <Stack alignItems="center" gap={1} sx={{ width: "100%", maxWidth: 360 }}>
+      <Typography
+        component="div"
+        sx={{ color: "secondary.main", fontSize: "3rem", fontWeight: 700, lineHeight: 1.1 }}
+      >
+        {value}
+      </Typography>
+      <Slider
+        value={value}
         min={question.min}
         max={question.max}
         step={question.step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        // No value-label bubble: on a phone it sits under the finger that's
+        // dragging, and the big number above already reads the value out.
+        valueLabelDisplay="off"
+        // Thumb/track are oversized on purpose: this is dragged with a thumb,
+        // in a dim room, often while the timer is running out.
+        sx={{
+          height: 12,
+          "& .MuiSlider-thumb": { width: 30, height: 30 },
+        }}
+        onChange={(_event, next) => onChange(Array.isArray(next) ? next[0] : next)}
       />
-      <div className="number-input__bounds">
-        <span>{question.min}</span>
-        <span>{question.max}</span>
-      </div>
-    </div>
+      <Stack direction="row" justifyContent="space-between" sx={{ width: "100%" }}>
+        <Typography variant="body2" color="text.secondary">
+          {question.min}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {question.max}
+        </Typography>
+      </Stack>
+    </Stack>
   );
 }

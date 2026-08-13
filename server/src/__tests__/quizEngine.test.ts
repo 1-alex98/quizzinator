@@ -299,7 +299,10 @@ describe("quiz engine", () => {
       name: "Bob",
       playerId,
     })) as AckResponse<PlayerJoinAck>;
-    expect(rejoinAck).toEqual({ ok: true, data: { playerId, sessionId, state: "reveal" } });
+    expect(rejoinAck).toEqual({
+      ok: true,
+      data: { playerId, sessionId, state: "reveal", answered: false },
+    });
 
     const afterReconnect = await reconnectSync;
     expect(afterReconnect.players[0]).toMatchObject({ id: playerId, connected: true, score: 100 });
@@ -307,6 +310,60 @@ describe("quiz engine", () => {
 
     host.disconnect();
     player.disconnect();
+  });
+
+  // A phone that drops mid-question (iOS screen lock) reconnects on a brand
+  // new socket and repeats player:join. The ack is the only message that new
+  // socket gets, so it has to carry enough to rebuild the answer screen.
+  it("hands a player rejoining mid-question the in-flight question and whether they already answered", async () => {
+    const { sessionId, code, hostToken } = await createLobby(numberQuestions);
+
+    const host = connect();
+    await waitForEvent(host, "connect" as never);
+    await emitAck(host, "host:join", { sessionId, hostToken });
+
+    // Two players so one can drop without triggering the "everyone answered"
+    // auto-reveal and ending the question under test.
+    let alice = connect();
+    const bob = connect();
+    await Promise.all([waitForEvent(alice, "connect" as never), waitForEvent(bob, "connect" as never)]);
+    const aliceJoin = (await emitAck(alice, "player:join", { code, name: "Alice" })) as AckResponse<PlayerJoinAck>;
+    const aliceId = (aliceJoin as { ok: true; data: PlayerJoinAck }).data.playerId;
+    await emitAck(bob, "player:join", { code, name: "Bob" });
+
+    const questionShown = waitForEvent(alice, "question:show");
+    await emitAck(host, "session:start", { sessionId });
+    await questionShown;
+
+    // Drops before answering: back on the answer screen, still able to answer.
+    alice.disconnect();
+    alice = connect();
+    await waitForEvent(alice, "connect" as never);
+    const beforeAnswering = (await emitAck(alice, "player:join", {
+      code,
+      name: "Alice",
+      playerId: aliceId,
+    })) as AckResponse<PlayerJoinAck>;
+    expect(beforeAnswering).toMatchObject({
+      ok: true,
+      data: { state: "question", answered: false, question: { index: 0, question: { id: "q1" } } },
+    });
+
+    // Drops after answering: must not be offered a second attempt.
+    await emitAck(alice, "answer:submit", { sessionId, playerId: aliceId, value: 42 });
+    alice.disconnect();
+    alice = connect();
+    await waitForEvent(alice, "connect" as never);
+    const afterAnswering = (await emitAck(alice, "player:join", {
+      code,
+      name: "Alice",
+      playerId: aliceId,
+    })) as AckResponse<PlayerJoinAck>;
+    expect(afterAnswering).toMatchObject({ ok: true, data: { state: "question", answered: true } });
+
+    host.disconnect();
+    alice.disconnect();
+    bob.disconnect();
   });
 
   it("auto-reveals based on connected players only, ignoring a disconnected player", async () => {

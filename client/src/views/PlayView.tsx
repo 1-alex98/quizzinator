@@ -1,23 +1,48 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { getSocket } from "../lib/socket.js";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
+import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
+import Zoom from "@mui/material/Zoom";
+import { getSocket, onReconnect } from "../lib/socket.js";
+import { celebrate } from "../lib/celebrate.js";
+import { AppIcon } from "../components/AppIcon.js";
+import { CountdownRing } from "../components/CountdownRing.js";
 import { FuzzyTextAnswerInput } from "../components/FuzzyTextAnswerInput.js";
 import { GeoMapInput, type GeoGuess } from "../components/GeoMapInput.js";
 import { NumberAnswerInput } from "../components/NumberAnswerInput.js";
 import { QuestionPrompt } from "../components/QuestionPrompt.js";
+import { Screen } from "../components/Screen.js";
 import type {
   AnswerResult,
   LeaderboardPayload,
+  PlayerJoinAck,
   PublicPlayer,
   PublicQuestion,
   QuestionRevealedPayload,
   QuestionShowPayload,
+  StateSyncPayload,
 } from "../lib/protocol.js";
 
-type Phase = "join" | "waiting" | "answering" | "submitted" | "revealed" | "ended";
+/**
+ * "between" is the reveal seen from a phone that has no result of its own to
+ * show - either the player joined late, or they were offline when the reveal
+ * event went out. The scores are on the TV, so the phone just says so.
+ */
+type Phase = "join" | "waiting" | "answering" | "submitted" | "between" | "revealed" | "ended";
 
-function storageKey(code: string): string {
+function playerIdKey(code: string): string {
   return `quizzinator:player:${code}`;
+}
+
+// The name is persisted alongside the id because player:join needs both: it
+// is what lets the app re-run the join handshake by itself after a reconnect
+// (or a Safari tab reload) without making the player re-type anything.
+function playerNameKey(code: string): string {
+  return `quizzinator:player-name:${code}`;
 }
 
 // Mobile participant app. One phase fills the screen at a time. The geo
@@ -27,6 +52,7 @@ export function PlayView() {
   const { code } = useParams<{ code: string }>();
   const [phase, setPhase] = useState<Phase>("join");
   const [error, setError] = useState<string | null>(null);
+  const [online, setOnline] = useState(true);
   const [name, setName] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
@@ -37,17 +63,70 @@ export function PlayView() {
   const [answerValue, setAnswerValue] = useState<string>("");
   const [geoPin, setGeoPin] = useState<GeoGuess | null>(null);
 
+  // Which question the UI is currently built around, so a resync for the
+  // question already on screen doesn't wipe a half-dragged slider or pin.
+  const shownQuestionId = useRef<string | null>(null);
+  const joinRef = useRef<(playerName: string) => void>(() => {});
+
   useEffect(() => {
     if (!code) return;
     const socket = getSocket();
 
-    const onQuestionShow = (payload: QuestionShowPayload) => {
+    const showQuestion = (payload: QuestionShowPayload, answered: boolean) => {
+      const isNewQuestion = shownQuestionId.current !== payload.question.id;
+      shownQuestionId.current = payload.question.id;
       setQuestion(payload);
-      setRemainingSec(payload.timeLimitSec);
-      setAnswerValue(defaultAnswerFor(payload.question));
-      setGeoPin(null);
-      setRevealed(null);
-      setPhase("answering");
+      setRemainingSec(Math.max(0, Math.round((payload.endsAt - Date.now()) / 1000)));
+      if (isNewQuestion) {
+        setAnswerValue(defaultAnswerFor(payload.question));
+        setGeoPin(null);
+        setRevealed(null);
+      }
+      setPhase(answered ? "submitted" : "answering");
+    };
+
+    const applyJoinAck = (data: PlayerJoinAck) => {
+      localStorage.setItem(playerIdKey(code), data.playerId);
+      setPlayerId(data.playerId);
+      setSessionId(data.sessionId);
+      if (data.state === "question" && data.question) {
+        showQuestion(data.question, data.answered);
+        return;
+      }
+      setPhase(data.state === "ended" ? "ended" : data.state === "reveal" ? "between" : "waiting");
+    };
+
+    const joinAsPlayer = (playerName: string) => {
+      const existingPlayerId = localStorage.getItem(playerIdKey(code)) ?? undefined;
+      socket.emit("player:join", { code, name: playerName, playerId: existingPlayerId }, (res) => {
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
+        localStorage.setItem(playerNameKey(code), playerName);
+        setError(null);
+        setOnline(true);
+        applyJoinAck(res.data);
+      });
+    };
+    joinRef.current = joinAsPlayer;
+
+    // The heart of the reconnect fix: a reconnected socket is a new socket id
+    // the server doesn't associate with this player, so it is no longer in
+    // the session's room and receives no further events. Locking an iPhone
+    // for a few seconds was enough to trigger exactly that. Re-running the
+    // handshake on every connection puts the phone back in the room and, via
+    // the ack, back on the right screen. Also covers a reloaded tab.
+    const rejoin = () => {
+      const storedName = localStorage.getItem(playerNameKey(code));
+      if (!storedName) return;
+      joinAsPlayer(storedName);
+    };
+    const stopRejoining = onReconnect(socket, rejoin);
+
+    const onDisconnect = () => setOnline(false);
+    const onQuestionShow = (payload: QuestionShowPayload) => {
+      showQuestion(payload, false);
     };
     const onTimerTick = (payload: { remainingSec: number }) => {
       setRemainingSec(payload.remainingSec);
@@ -60,13 +139,35 @@ export function PlayView() {
       setEnded(payload);
       setPhase("ended");
     };
+    // Safety net for anything missed while backgrounded: the server's view of
+    // the session wins. Only acted on when it disagrees with what's on screen,
+    // so a routine sync (another player joining) never disturbs this phone.
+    const onStateSync = (payload: StateSyncPayload) => {
+      if (payload.state === "question" && payload.question) {
+        if (shownQuestionId.current !== payload.question.question.id) {
+          showQuestion(payload.question, false);
+        }
+        return;
+      }
+      setPhase((current) => {
+        if (payload.state === "ended") return "ended";
+        if (payload.state === "reveal") return current === "revealed" ? current : "between";
+        if (payload.state === "lobby") return current === "join" ? current : "waiting";
+        return current;
+      });
+    };
 
+    socket.on("disconnect", onDisconnect);
+    socket.on("state:sync", onStateSync);
     socket.on("question:show", onQuestionShow);
     socket.on("timer:tick", onTimerTick);
     socket.on("question:revealed", onRevealed);
     socket.on("session:ended", onEnded);
 
     return () => {
+      stopRejoining();
+      socket.off("disconnect", onDisconnect);
+      socket.off("state:sync", onStateSync);
       socket.off("question:show", onQuestionShow);
       socket.off("timer:tick", onTimerTick);
       socket.off("question:revealed", onRevealed);
@@ -79,17 +180,7 @@ export function PlayView() {
   const join = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const existingPlayerId = localStorage.getItem(storageKey(code)) ?? undefined;
-    getSocket().emit("player:join", { code, name: trimmed, playerId: existingPlayerId }, (res) => {
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      localStorage.setItem(storageKey(code), res.data.playerId);
-      setPlayerId(res.data.playerId);
-      setSessionId(res.data.sessionId);
-      setPhase(res.data.state === "question" ? "answering" : res.data.state === "reveal" ? "revealed" : "waiting");
-    });
+    joinRef.current(trimmed);
   };
 
   const submitAnswer = (value: unknown) => {
@@ -105,43 +196,44 @@ export function PlayView() {
 
   if (error) {
     return (
-      <div className="screen">
-        <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-          error
-        </span>
-        <p>{error}</p>
-      </div>
+      <Screen phaseKey="error">
+        <AppIcon name="error" sx={{ fontSize: 64 }} color="error" />
+        <Typography color="text.secondary">{error}</Typography>
+      </Screen>
     );
   }
 
   if (phase === "join") {
     return (
-      <div className="screen">
-        <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-          smartphone
-        </span>
-        <h1>Join code: {code}</h1>
-        <input
+      <Screen phaseKey="join">
+        <AppIcon name="smartphone" sx={{ fontSize: 64 }} color="primary" />
+        <Chip color="secondary" variant="outlined" label={`Join code: ${code}`} sx={{ letterSpacing: "0.1em" }} />
+        <TextField
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Your name"
+          autoFocus
+          fullWidth
           onKeyDown={(e) => e.key === "Enter" && join()}
+          slotProps={{ htmlInput: { autoComplete: "nickname", enterKeyHint: "go", maxLength: 24 } }}
+          sx={{ maxWidth: 340, "& .MuiOutlinedInput-root": { borderRadius: 999, fontSize: "1.25rem" } }}
         />
-        <button className="btn" onClick={join}>
+        <Button size="large" onClick={join} disabled={!name.trim()} startIcon={<AppIcon name="login" />}>
           Join
-        </button>
-      </div>
+        </Button>
+      </Screen>
     );
   }
 
   if (phase === "waiting") {
     return (
-      <div className="screen">
-        <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-          hourglass_top
-        </span>
-        <p>Waiting for the host to start…</p>
-      </div>
+      <Screen phaseKey="waiting">
+        <OfflineChip online={online} />
+        <AppIcon name="hourglass_top" sx={{ fontSize: 64 }} color="primary" />
+        <Typography variant="h4" color="text.secondary">
+          Waiting for the host to start…
+        </Typography>
+      </Screen>
     );
   }
 
@@ -160,49 +252,79 @@ export function PlayView() {
     const canSubmit = question.question.type !== "fuzzy-text" || answerValue.trim().length > 0;
     const doSubmit = () => canSubmit && submitAnswer(parseAnswer(question.question, answerValue));
     return (
-      <div className="screen">
-        <p>{remainingSec ?? question.timeLimitSec}s left</p>
-        <QuestionPrompt question={question.question} />
-        <AnswerInput
-          question={question.question}
-          value={answerValue}
-          onChange={setAnswerValue}
-          onSubmit={doSubmit}
-        />
-        <button className="btn" disabled={!canSubmit} onClick={doSubmit}>
-          Submit
-        </button>
-      </div>
+      <Screen phaseKey={`answering-${question.question.id}`} gap={2} sx={{ justifyContent: "space-between" }}>
+        <Stack alignItems="center" gap={1}>
+          <OfflineChip online={online} />
+          <CountdownRing
+            remainingSec={remainingSec ?? question.timeLimitSec}
+            totalSec={question.timeLimitSec}
+            size={72}
+          />
+        </Stack>
+        <QuestionPrompt question={question.question} variant="mobile" />
+        <Stack alignItems="center" gap={3} sx={{ width: "100%" }}>
+          <AnswerInput
+            question={question.question}
+            value={answerValue}
+            onChange={setAnswerValue}
+            onSubmit={doSubmit}
+          />
+          <Button size="large" disabled={!canSubmit} onClick={doSubmit} startIcon={<AppIcon name="send" />}>
+            Submit
+          </Button>
+        </Stack>
+      </Screen>
     );
   }
 
   if (phase === "submitted") {
     return (
-      <div className="screen">
-        <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-          check_circle
-        </span>
-        <p>Answer submitted, waiting for other players…</p>
-      </div>
+      <Screen phaseKey="submitted">
+        <OfflineChip online={online} />
+        <Zoom in appear>
+          <Box>
+            <AppIcon name="check_circle" sx={{ fontSize: 88 }} color="success" />
+          </Box>
+        </Zoom>
+        <Typography variant="h4">Answer submitted, waiting for other players…</Typography>
+      </Screen>
+    );
+  }
+
+  if (phase === "between") {
+    return (
+      <Screen phaseKey="between">
+        <OfflineChip online={online} />
+        <AppIcon name="tv" sx={{ fontSize: 64 }} color="primary" />
+        <Typography variant="h4" color="text.secondary">
+          Scores are on the big screen…
+        </Typography>
+      </Screen>
     );
   }
 
   if (phase === "revealed") {
     const mine = playerId ? revealed?.results.find((r: AnswerResult) => r.playerId === playerId) : undefined;
     const rank = rankOf(revealed?.leaderboard, playerId);
+    const scored = (mine?.score ?? 0) > 0;
     return (
-      <div className="screen">
-        <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-          {mine?.correct ? "check_circle" : "cancel"}
-        </span>
-        <h1>{mine ? `+${mine.score} points` : "Waiting for next question…"}</h1>
-        {rank && (
-          <p className="rank-badge">
-            <span className="material-symbols-rounded">military_tech</span>
-            {`Rank #${rank.position} of ${rank.total}`}
-          </p>
-        )}
-      </div>
+      <Screen phaseKey={`revealed-${revealed?.index ?? 0}`}>
+        <OfflineChip online={online} />
+        {mine?.correct && <Celebration />}
+        <Zoom in appear>
+          <Box>
+            <AppIcon
+              name={mine?.correct ? "check_circle" : scored ? "target" : "cancel"}
+              sx={{ fontSize: 96 }}
+              color={scored ? "success" : "error"}
+            />
+          </Box>
+        </Zoom>
+        <Typography variant="h1" sx={{ color: scored ? "secondary.main" : "text.primary" }}>
+          {mine ? `+${mine.score} points` : "Waiting for next question…"}
+        </Typography>
+        {rank && <RankBadge position={rank.position} total={rank.total} />}
+      </Screen>
     );
   }
 
@@ -210,21 +332,51 @@ export function PlayView() {
     const mine = ended?.players.find((p) => p.id === playerId);
     const rank = rankOf(ended?.players, playerId);
     return (
-      <div className="screen">
-        <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-          emoji_events
-        </span>
-        <h1>Final score: {mine?.score ?? 0}</h1>
-        {rank && (
-          <p className="rank-badge">
-            <span className="material-symbols-rounded">military_tech</span>
-            {`Rank #${rank.position} of ${rank.total}`}
-          </p>
-        )}
-      </div>
+      <Screen phaseKey="ended">
+        {rank?.position === 1 && <Celebration />}
+        <AppIcon name="emoji_events" sx={{ fontSize: 96 }} color="secondary" />
+        <Typography variant="h1">Final score: {mine?.score ?? 0}</Typography>
+        {rank && <RankBadge position={rank.position} total={rank.total} />}
+      </Screen>
     );
   }
 
+  return null;
+}
+
+function RankBadge({ position, total }: { position: number; total: number }) {
+  return (
+    <Chip
+      color="primary"
+      variant="outlined"
+      size="medium"
+      icon={<AppIcon name="military_tech" sx={{ fontSize: 22 }} />}
+      label={`Rank #${position} of ${total}`}
+      className="rank-badge"
+      sx={{ fontSize: "1.1rem", height: 44, px: 1 }}
+    />
+  );
+}
+
+/** Tells the player their phone has dropped, so a frozen screen isn't mistaken for a slow host. */
+function OfflineChip({ online }: { online: boolean }) {
+  if (online) return null;
+  return (
+    <Chip
+      color="warning"
+      variant="outlined"
+      size="small"
+      icon={<AppIcon name="sync_problem" sx={{ fontSize: 18 }} />}
+      label="Reconnecting…"
+    />
+  );
+}
+
+/** Confetti, fired once per mount - i.e. once per reveal the player got right. */
+function Celebration() {
+  useEffect(() => {
+    celebrate("big");
+  }, []);
   return null;
 }
 

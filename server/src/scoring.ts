@@ -20,17 +20,27 @@ export function haversineKm(lat1: number, lng1: number, lat2: number, lng2: numb
 
 /**
  * Falloff curve: linear from full `points` at zero distance down to 0 at
- * (or beyond) the question's error tolerance — `question.max - question.min`
+ * (or beyond) the question's error tolerance — `question.scoreToleranceValue`
  * for number questions, `question.maxDistanceKm` for geo. A guess exactly at
  * the tolerance boundary scores 0; anything further also scores 0 (closeness
  * is clamped, not extrapolated negative).
+ *
+ * A number question's tolerance defaults to the slider's own width
+ * (`max - min`), which is the behaviour from before the field existed: half
+ * the range off is worth half the points. Setting it explicitly decouples
+ * "how wide a range can I drag over" from "how close do I have to be" — a
+ * 0-100 slider with a tolerance of 1 only pays out within ±1. A tolerance of
+ * 0 means nothing but an exact hit scores.
  */
 function scoreNumber(question: NumberQuestion, value: unknown): ScoreResult {
   const guess = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(guess)) return { score: 0, correct: false };
-  const range = Math.max(question.max - question.min, Number.EPSILON);
-  const closeness = Math.max(0, 1 - Math.abs(guess - question.correctValue) / range);
-  return { score: Math.round(question.points * closeness), correct: guess === question.correctValue };
+  const error = Math.abs(guess - question.correctValue);
+  const tolerance = question.scoreToleranceValue ?? question.max - question.min;
+  const correct = guess === question.correctValue;
+  if (tolerance <= 0) return { score: correct ? question.points : 0, correct };
+  const closeness = Math.max(0, 1 - error / tolerance);
+  return { score: Math.round(question.points * closeness), correct };
 }
 
 /** See {@link scoreNumber} for the shared linear falloff curve description. */

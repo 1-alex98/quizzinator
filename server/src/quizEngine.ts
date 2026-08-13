@@ -246,7 +246,17 @@ export function registerQuizEngine(io: IoServer): void {
       socketRegistry.set(socket.id, { sessionId: session.id, isHost: false, playerId: player.id });
       socket.join(room(session.id));
 
-      ack(ok({ playerId: player.id, sessionId: session.id, state: session.state }));
+      ack(
+        ok({
+          playerId: player.id,
+          sessionId: session.id,
+          state: session.state,
+          question: session.state === "question" ? buildQuestionShowPayload(session) : undefined,
+          // Only meaningful while a question is in flight; answers linger in
+          // currentAnswers through the reveal that follows.
+          answered: session.state === "question" && session.currentAnswers.has(player.id),
+        }),
+      );
       broadcastStateSync(io, session);
     });
 
@@ -355,6 +365,13 @@ export function registerQuizEngine(io: IoServer): void {
       const player = session.players.get(entry.playerId);
       if (!player) return;
 
+      // A flaky connection can deliver the old socket's "disconnect" after
+      // the replacement socket has already rejoined. Only the socket that is
+      // still the player's current one is allowed to mark them offline,
+      // otherwise a successful reconnect gets undone by its own predecessor.
+      if (player.socketId !== socket.id) return;
+
+      player.socketId = null;
       player.connected = false;
       broadcastStateSync(io, session);
 

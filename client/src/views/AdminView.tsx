@@ -1,6 +1,30 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import Alert from "@mui/material/Alert";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import CircularProgress from "@mui/material/CircularProgress";
+import LinearProgress from "@mui/material/LinearProgress";
+import Paper from "@mui/material/Paper";
+import Stack from "@mui/material/Stack";
+import Typography from "@mui/material/Typography";
+import { styled } from "@mui/material/styles";
+import { AppIcon } from "../components/AppIcon.js";
+import { Screen } from "../components/Screen.js";
 import { TEST_QUESTION_SET } from "../lib/testQuestionSet.js";
+
+// Off-screen rather than `display: none` so the input keeps its accessible
+// name and stays focusable via the wrapping <Button component="label">.
+const HiddenFileInput = styled("input")({
+  clipPath: "inset(50%)",
+  position: "absolute",
+  bottom: 0,
+  left: 0,
+  height: 1,
+  width: 1,
+  overflow: "hidden",
+  whiteSpace: "nowrap",
+});
 
 // Picks or uploads a question set, then immediately creates a session,
 // attaches the set, and redirects to the host lobby - one click from the
@@ -11,6 +35,7 @@ export function AdminView() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [fileName, setFileName] = useState<string | null>(null);
 
   const hostWithQuestionSet = async (questionSet: unknown) => {
     const sessionRes = await fetch("/api/sessions", { method: "POST" });
@@ -45,6 +70,7 @@ export function AdminView() {
   const onFileChosen = async (file: File) => {
     setError(null);
     setStarting(true);
+    setFileName(file.name);
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -57,35 +83,126 @@ export function AdminView() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
       setStarting(false);
+      setFileName(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
   return (
-    <div className="screen">
-      <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-        upload_file
-      </span>
-      <h1>Host a quiz</h1>
-      <p>Upload a question set (.json or .zip) to start hosting.</p>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".json,.zip"
-        disabled={starting}
-        aria-label="Question set file"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onFileChosen(file);
-        }}
-      />
-      <p>or</p>
-      <button className="btn" disabled={starting} onClick={startTestQuiz}>
-        <span className="material-symbols-rounded">science</span>
-        {starting ? "Starting…" : "Start quiz with test data"}
-      </button>
-      {error && <p className="card">{error}</p>}
-    </div>
+    <Screen phaseKey="admin" gap={3}>
+      <Box>
+        <Typography variant="h2" component="h1">
+          Host a quiz
+        </Typography>
+        <Typography variant="h4" component="p" sx={{ color: "text.secondary", fontWeight: 400, mt: 1 }}>
+          Pick a question set to get a join code on screen.
+        </Typography>
+      </Box>
+
+      <Stack
+        direction={{ xs: "column", md: "row" }}
+        gap={2}
+        alignItems="stretch"
+        sx={{ width: "100%", maxWidth: 880 }}
+      >
+        <OptionCard
+          icon="upload_file"
+          title="Upload a question set"
+          description="A .json file, or a .zip with its images alongside."
+        >
+          {/* MUI's file-input pattern: the real input stays in the DOM (and
+              keeps its label for assistive tech) but is hidden behind the
+              button that wraps it. */}
+          <Button component="label" disabled={starting} startIcon={<AppIcon name="folder_open" />}>
+            Choose file
+            <HiddenFileInput
+              ref={fileInputRef}
+              type="file"
+              accept=".json,.zip"
+              disabled={starting}
+              aria-label="Question set file"
+              onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                const file = e.target.files?.[0];
+                if (file) onFileChosen(file);
+              }}
+            />
+          </Button>
+          {fileName && (
+            <Typography variant="body2" sx={{ color: "secondary.main", wordBreak: "break-all" }}>
+              {fileName}
+            </Typography>
+          )}
+        </OptionCard>
+
+        <Typography
+          variant="body2"
+          sx={{ color: "text.secondary", alignSelf: "center", textTransform: "uppercase", letterSpacing: "0.2em" }}
+        >
+          or
+        </Typography>
+
+        <OptionCard
+          icon="science"
+          title="Try it out"
+          description="A built-in three-question set - one of each question type."
+        >
+          <Button
+            color="secondary"
+            disabled={starting}
+            onClick={startTestQuiz}
+            startIcon={starting ? <CircularProgress size={20} color="inherit" /> : <AppIcon name="science" />}
+          >
+            {starting ? "Starting…" : "Start quiz with test data"}
+          </Button>
+        </OptionCard>
+      </Stack>
+
+      <Box sx={{ width: "100%", maxWidth: 880, minHeight: 10 }}>
+        {starting && <LinearProgress color="secondary" />}
+      </Box>
+
+      {error && (
+        <Alert severity="error" variant="outlined" sx={{ width: "100%", maxWidth: 880, textAlign: "left" }}>
+          {error}
+        </Alert>
+      )}
+    </Screen>
   );
 }
 
+function OptionCard({
+  icon,
+  title,
+  description,
+  children,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        flex: 1,
+        p: 3,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 1.5,
+        border: 1,
+        borderColor: "divider",
+      }}
+    >
+      <AppIcon name={icon} color="primary" sx={{ fontSize: "2.75rem" }} />
+      <Typography variant="h4" component="h2">
+        {title}
+      </Typography>
+      <Typography variant="body2" sx={{ color: "text.secondary", flexGrow: 1 }}>
+        {description}
+      </Typography>
+      {children}
+    </Paper>
+  );
+}

@@ -60,6 +60,26 @@ describe("scoreAnswer for number questions", () => {
   it("awards zero for a non-numeric answer", () => {
     expect(scoreAnswer(numberQuestion, "not-a-number")).toEqual({ score: 0, correct: false });
   });
+
+  it("falls off over scoreToleranceValue instead of the slider range when set", () => {
+    // Same 0-100 slider, but only guesses within +-10 score anything.
+    const tight: NumberQuestion = { ...numberQuestion, scoreToleranceValue: 10 };
+    expect(scoreAnswer(tight, 50)).toEqual({ score: 100, correct: true });
+    expect(scoreAnswer(tight, 55)).toEqual({ score: 50, correct: false });
+    expect(scoreAnswer(tight, 60)).toEqual({ score: 0, correct: false });
+    expect(scoreAnswer(tight, 90)).toEqual({ score: 0, correct: false });
+  });
+
+  it("can be more forgiving than the slider range", () => {
+    const loose: NumberQuestion = { ...numberQuestion, scoreToleranceValue: 400 };
+    expect(scoreAnswer(loose, 100)).toEqual({ score: 88, correct: false });
+  });
+
+  it("scores only an exact hit when the tolerance is zero", () => {
+    const exact: NumberQuestion = { ...numberQuestion, scoreToleranceValue: 0 };
+    expect(scoreAnswer(exact, 50)).toEqual({ score: 100, correct: true });
+    expect(scoreAnswer(exact, 51)).toEqual({ score: 0, correct: false });
+  });
 });
 
 describe("scoreAnswer for geo questions", () => {

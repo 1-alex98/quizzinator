@@ -1,9 +1,22 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
-import { getSocket } from "../lib/socket.js";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
+import Grow from "@mui/material/Grow";
+import LinearProgress from "@mui/material/LinearProgress";
+import Paper from "@mui/material/Paper";
+import Stack from "@mui/material/Stack";
+import Typography from "@mui/material/Typography";
+import { getSocket, onReconnect } from "../lib/socket.js";
+import { celebrate } from "../lib/celebrate.js";
+import { AppIcon } from "../components/AppIcon.js";
+import { CountdownRing } from "../components/CountdownRing.js";
 import { GeoRevealMap } from "../components/GeoRevealMap.js";
+import { Leaderboard, MAX_VISIBLE_PLAYERS } from "../components/Leaderboard.js";
 import { QuestionPrompt } from "../components/QuestionPrompt.js";
+import { Screen } from "../components/Screen.js";
 import type {
   AnswerResult,
   LeaderboardPayload,
@@ -20,13 +33,14 @@ import type {
 // with a synced countdown, the reveal (per-type correct answer + a
 // per-question leaderboard delta), and the final leaderboard.
 
-// Large rooms (~20 players) would otherwise overflow the single-screen,
-// no-scroll layout - show only the top rows plus a "+N more" summary.
-const MAX_VISIBLE_PLAYERS = 10;
+function hostTokenKey(sessionId: string): string {
+  return `quizzinator:host-token:${sessionId}`;
+}
 
 export function HostView() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [error, setError] = useState<string | null>(null);
+  const [online, setOnline] = useState(true);
   const [phase, setPhase] = useState<SessionState | "loading">("loading");
   const [players, setPlayers] = useState<PublicPlayer[]>([]);
   const [code, setCode] = useState<string>("");
@@ -39,27 +53,37 @@ export function HostView() {
   useEffect(() => {
     if (!sessionId) return;
     const socket = getSocket();
-    const hostToken = sessionStorage.getItem(`quizzinator:host-token:${sessionId}`) ?? "";
+    const hostToken = sessionStorage.getItem(hostTokenKey(sessionId)) ?? "";
 
-    socket.emit("host:join", { sessionId, hostToken }, (res) => {
-      if (!res.ok) {
-        setError(res.error);
-        return;
+    const applySync = (data: StateSyncPayload) => {
+      setPhase(data.state);
+      setPlayers(data.players);
+      setCode(data.code);
+      if (data.question) {
+        setQuestion(data.question);
+        setRemainingSec(Math.max(0, Math.round((data.question.endsAt - Date.now()) / 1000)));
       }
-      setPhase(res.data.state);
-      setPlayers(res.data.players);
-      setCode(res.data.code);
-      if (res.data.question) {
-        setQuestion(res.data.question);
-        setRemainingSec(Math.max(0, Math.round((res.data.question.endsAt - Date.now()) / 1000)));
-      }
-    });
-
-    const onStateSync = (payload: StateSyncPayload) => {
-      setPhase(payload.state);
-      setPlayers(payload.players);
-      setCode(payload.code);
     };
+
+    // Re-run the handshake on every (re)connection, not just on mount: a
+    // reconnect gives us a brand new socket id, which the server does not yet
+    // know is the host - without this the TV silently stops receiving events
+    // after the laptop sleeps or the wifi blips.
+    const joinAsHost = () => {
+      socket.emit("host:join", { sessionId, hostToken }, (res) => {
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
+        setError(null);
+        setOnline(true);
+        applySync(res.data);
+      });
+    };
+    const stopRejoining = onReconnect(socket, joinAsHost);
+
+    const onDisconnect = () => setOnline(false);
+    const onStateSync = (payload: StateSyncPayload) => applySync(payload);
     const onQuestionShow = (payload: QuestionShowPayload) => {
       setPhase("question");
       setQuestion(payload);
@@ -84,6 +108,7 @@ export function HostView() {
       setPlayers(payload.players);
     };
 
+    socket.on("disconnect", onDisconnect);
     socket.on("state:sync", onStateSync);
     socket.on("question:show", onQuestionShow);
     socket.on("timer:tick", onTimerTick);
@@ -92,6 +117,8 @@ export function HostView() {
     socket.on("session:ended", onEnded);
 
     return () => {
+      stopRejoining();
+      socket.off("disconnect", onDisconnect);
       socket.off("state:sync", onStateSync);
       socket.off("question:show", onQuestionShow);
       socket.off("timer:tick", onTimerTick);
@@ -105,24 +132,20 @@ export function HostView() {
 
   if (error) {
     return (
-      <div className="screen">
-        <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-          error
-        </span>
-        <h1>Couldn't load session</h1>
-        <p>{error}</p>
-      </div>
+      <Screen phaseKey="error">
+        <AppIcon name="error" sx={{ fontSize: 72 }} color="error" />
+        <Typography variant="h2">Couldn't load session</Typography>
+        <Typography color="text.secondary">{error}</Typography>
+      </Screen>
     );
   }
 
   if (phase === "loading") {
     return (
-      <div className="screen">
-        <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-          cast
-        </span>
-        <p>Connecting…</p>
-      </div>
+      <Screen phaseKey="loading">
+        <AppIcon name="cast" sx={{ fontSize: 72 }} color="primary" />
+        <Typography color="text.secondary">Connecting…</Typography>
+      </Screen>
     );
   }
 
@@ -139,13 +162,15 @@ export function HostView() {
 
   if (phase === "ended") {
     return (
-      <div className="screen">
-        <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-          emoji_events
-        </span>
-        <h1>Final leaderboard</h1>
-        <Leaderboard players={ended?.players ?? players} />
-      </div>
+      <Screen phaseKey="ended" gap={2}>
+        <ConnectionWarning online={online} />
+        <AppIcon name="emoji_events" sx={{ fontSize: 72 }} color="secondary" />
+        <Typography variant="h1">Final leaderboard</Typography>
+        <Box sx={{ width: "min(100%, 720px)" }}>
+          <Leaderboard players={ended?.players ?? players} />
+        </Box>
+        <FinalCelebration />
+      </Screen>
     );
   }
 
@@ -153,100 +178,181 @@ export function HostView() {
     revealed && new Map(revealed.results.map((result) => [result.playerId, result.score]));
 
   if (phase === "question" && question) {
+    const answeredFraction =
+      progress && progress.total > 0 ? (progress.answered / progress.total) * 100 : 0;
     return (
-      <div className="screen">
-        <p>
-          Question {question.index + 1} / {question.total}
-        </p>
-        <QuestionPrompt question={question.question} />
-        <p className="card">{remainingSec ?? question.timeLimitSec}s left</p>
-        {progress && (
-          <p>
-            {progress.answered} / {progress.total} answered
-          </p>
-        )}
-        <button className="btn" onClick={revealNow}>
-          <span className="material-symbols-rounded">visibility</span>
-          Reveal now
-        </button>
-      </div>
+      <Screen phaseKey={`question-${question.index}`} gap={2} sx={{ justifyContent: "space-between" }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ width: "100%" }}>
+          <Chip
+            color="primary"
+            variant="outlined"
+            label={`Question ${question.index + 1} / ${question.total}`}
+          />
+          <ConnectionWarning online={online} />
+          <CountdownRing
+            remainingSec={remainingSec ?? question.timeLimitSec}
+            totalSec={question.timeLimitSec}
+          />
+        </Stack>
+
+        <QuestionPrompt question={question.question} variant="host" />
+
+        <Stack alignItems="center" gap={1.5} sx={{ width: "min(100%, 640px)" }}>
+          {progress && (
+            <>
+              <Typography color="text.secondary">
+                {progress.answered} / {progress.total} answered
+              </Typography>
+              <LinearProgress
+                variant="determinate"
+                value={answeredFraction}
+                color="secondary"
+                sx={{ width: "100%" }}
+              />
+            </>
+          )}
+          <Button onClick={revealNow} startIcon={<AppIcon name="visibility" />}>
+            Reveal now
+          </Button>
+        </Stack>
+      </Screen>
     );
   }
 
   if (phase === "reveal" && revealed && question) {
     return (
-      <div className="screen">
-        <QuestionPrompt question={question.question} />
-        <QuestionRevealDetail question={question.question} revealed={revealed} players={players} />
-        <h1>Leaderboard</h1>
-        <Leaderboard players={revealed.leaderboard} deltas={revealDeltas ?? undefined} />
-        <button className="btn" onClick={nextQuestion}>
-          <span className="material-symbols-rounded">skip_next</span>
+      <Screen phaseKey={`reveal-${revealed.index}`} gap={2} sx={{ justifyContent: "space-between" }}>
+        <Typography variant="h3">{question.question.prompt}</Typography>
+        {/* Side by side on a TV, stacked on anything narrower: the correct
+            answer and the standings are both "what everyone looks at now". */}
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          gap={3}
+          alignItems="center"
+          justifyContent="center"
+          sx={{ width: "100%", minHeight: 0, flex: 1 }}
+        >
+          <Box sx={{ flex: 1, maxWidth: 680, width: "100%" }}>
+            <QuestionRevealDetail question={question.question} revealed={revealed} players={players} />
+          </Box>
+          <Box sx={{ flex: 1, maxWidth: 680, width: "100%" }}>
+            <Typography variant="h4" sx={{ mb: 1.5 }}>
+              Leaderboard
+            </Typography>
+            <Leaderboard players={revealed.leaderboard} deltas={revealDeltas ?? undefined} />
+          </Box>
+        </Stack>
+        <Button size="large" onClick={nextQuestion} startIcon={<AppIcon name="skip_next" />}>
           Next question
-        </button>
-      </div>
+        </Button>
+      </Screen>
     );
   }
 
   return (
-    <div className="screen">
-      <span className="material-symbols-rounded" style={{ fontSize: "3rem" }}>
-        cast
-      </span>
-      <h1>Join at {joinUrl}</h1>
-      <p className="card">Code: {code}</p>
-      <div className="join-qr card">
-        <QRCodeSVG value={joinUrl} size={180} marginSize={2} />
-      </div>
-      <p>
-        {players.length} player{players.length === 1 ? "" : "s"} joined
-      </p>
-      <ul className="player-list">
-        {players.slice(0, MAX_VISIBLE_PLAYERS).map((p) => (
-          <li key={p.id}>
-            {p.name} {p.connected ? "" : "(disconnected)"}
-          </li>
-        ))}
-        {players.length > MAX_VISIBLE_PLAYERS && (
-          <li className="list-more">+{players.length - MAX_VISIBLE_PLAYERS} more</li>
-        )}
-      </ul>
-      <button className="btn" onClick={startQuiz}>
-        <span className="material-symbols-rounded">play_arrow</span>
-        Start quiz
-      </button>
-      <button className="btn" onClick={endQuiz}>
-        End quiz
-      </button>
-    </div>
+    <Screen phaseKey="lobby" gap={2} sx={{ justifyContent: "space-between" }}>
+      <Stack alignItems="center" gap={1}>
+        <ConnectionWarning online={online} />
+        <Typography variant="h2">Join the quiz</Typography>
+        <Typography color="text.secondary">{joinUrl}</Typography>
+      </Stack>
+
+      <Stack direction={{ xs: "column", sm: "row" }} gap={4} alignItems="center" justifyContent="center">
+        <Paper className="join-qr" elevation={8} sx={{ p: 2, lineHeight: 0, bgcolor: "#ffffff" }}>
+          <QRCodeSVG value={joinUrl} size={220} marginSize={2} />
+        </Paper>
+        <Stack alignItems="center" gap={0.5}>
+          <Typography color="text.secondary" sx={{ letterSpacing: "0.18em", textTransform: "uppercase" }}>
+            Code
+          </Typography>
+          <Typography
+            variant="h1"
+            sx={{ letterSpacing: "0.18em", color: "secondary.main", fontVariantNumeric: "tabular-nums" }}
+          >
+            {code}
+          </Typography>
+        </Stack>
+      </Stack>
+
+      <Stack alignItems="center" gap={2} sx={{ width: "100%", minHeight: 0 }}>
+        <Typography color="text.secondary">
+          {players.length} player{players.length === 1 ? "" : "s"} joined
+        </Typography>
+        <PlayerChips players={players} />
+        <Stack direction="row" gap={2} alignItems="center">
+          <Button size="large" onClick={startQuiz} startIcon={<AppIcon name="play_arrow" />}>
+            Start quiz
+          </Button>
+          <Button variant="text" color="inherit" onClick={endQuiz}>
+            End quiz
+          </Button>
+        </Stack>
+      </Stack>
+    </Screen>
   );
 }
 
-function Leaderboard({
-  players,
-  deltas,
-}: {
-  players: PublicPlayer[];
-  /** Points gained this round, keyed by player id. Only shown during the reveal phase. */
-  deltas?: Map<string, number>;
-}) {
+/** Lobby roster. Truncated like the leaderboard so a full room can't overflow the no-scroll screen. */
+function PlayerChips({ players }: { players: PublicPlayer[] }) {
   const visible = players.slice(0, MAX_VISIBLE_PLAYERS);
-  const hiddenCount = players.length - visible.length;
+  const hidden = players.length - visible.length;
   return (
-    <ol className="leaderboard">
-      {visible.map((p) => (
-        <li key={p.id}>
-          {p.name} — {p.score}
-          {deltas?.has(p.id) && <span className="leaderboard__delta"> +{deltas.get(p.id)}</span>}
-        </li>
+    <Box
+      component="ul"
+      className="player-list"
+      sx={{
+        listStyle: "none",
+        m: 0,
+        p: 0,
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 1,
+        justifyContent: "center",
+      }}
+    >
+      {visible.map((p, index) => (
+        <Grow in key={p.id} timeout={280} style={{ transitionDelay: `${Math.min(index, 8) * 40}ms` }}>
+          <Box component="li">
+            <Chip
+              label={p.name}
+              color={p.connected ? "primary" : "default"}
+              variant={p.connected ? "filled" : "outlined"}
+              sx={{ opacity: p.connected ? 1 : 0.5 }}
+              icon={<AppIcon name={p.connected ? "person" : "wifi_off"} sx={{ fontSize: 20 }} />}
+            />
+          </Box>
+        </Grow>
       ))}
-      {hiddenCount > 0 && (
-        <li className="list-more">
-          +{hiddenCount} more player{hiddenCount === 1 ? "" : "s"}
-        </li>
+      {hidden > 0 && (
+        <Box component="li" className="list-more" sx={{ alignSelf: "center", opacity: 0.7 }}>
+          <Typography component="span" fontStyle="italic">
+            +{hidden} more
+          </Typography>
+        </Box>
       )}
-    </ol>
+    </Box>
   );
+}
+
+/** Surfaces a dropped socket on the TV, since the room can't tell a frozen screen from a live one. */
+function ConnectionWarning({ online }: { online: boolean }) {
+  if (online) return null;
+  return (
+    <Chip
+      color="warning"
+      variant="outlined"
+      icon={<AppIcon name="sync_problem" sx={{ fontSize: 20 }} />}
+      label="Reconnecting…"
+    />
+  );
+}
+
+/** Fires once when the final leaderboard appears - the moment the room cheers. */
+function FinalCelebration() {
+  useEffect(() => {
+    celebrate("big");
+  }, []);
+  return null;
 }
 
 // Per-type "correct answer" display for the reveal phase.
@@ -274,39 +380,47 @@ function QuestionRevealDetail({
     );
   }
 
-  if (question.type === "number") {
-    const correct = revealed.correctAnswer as { correctValue: number };
-    return (
-      <div className="card reveal-number">
-        <p className="reveal-number__answer">Correct answer: {correct.correctValue}</p>
-        <ul className="reveal-number__list">
-          {revealed.results.map((result: AnswerResult) => (
-            <li key={result.playerId}>
-              {nameFor(result.playerId)}: {String(result.value)} — +{result.score}
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  }
+  const answerText =
+    question.type === "number"
+      ? `Correct answer: ${(revealed.correctAnswer as { correctValue: number }).correctValue}`
+      : formatAcceptedAnswers(revealed.correctAnswer as { acceptedAnswers: string[] });
 
-  if (question.type === "fuzzy-text") {
-    const correct = revealed.correctAnswer as { acceptedAnswers: string[] };
-    return (
-      <div className="card reveal-fuzzy">
-        <p className="reveal-fuzzy__answer">
-          Accepted answer{correct.acceptedAnswers.length > 1 ? "s" : ""}: {correct.acceptedAnswers.join(", ")}
-        </p>
-        <ul className="reveal-fuzzy__list">
-          {revealed.results.map((result: AnswerResult) => (
-            <li key={result.playerId}>
-              {nameFor(result.playerId)}: {result.value ? String(result.value) : "(no answer)"} — +{result.score}
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  }
+  return (
+    <Paper
+      elevation={6}
+      className={question.type === "number" ? "reveal-number" : "reveal-fuzzy"}
+      sx={{ p: 3, width: "100%", textAlign: "left" }}
+    >
+      <Typography variant="h4" sx={{ color: "success.main", mb: 2 }}>
+        {answerText}
+      </Typography>
+      <Stack component="ul" gap={0.5} sx={{ listStyle: "none", m: 0, p: 0 }}>
+        {revealed.results.slice(0, MAX_VISIBLE_PLAYERS).map((result: AnswerResult) => (
+          <Stack
+            component="li"
+            key={result.playerId}
+            direction="row"
+            gap={1}
+            alignItems="center"
+            justifyContent="space-between"
+          >
+            <Typography noWrap sx={{ opacity: result.score > 0 ? 1 : 0.55 }}>
+              {`${nameFor(result.playerId)}: ${formatGuess(result.value)} — +${result.score}`}
+            </Typography>
+            {result.correct && <AppIcon name="check_circle" color="success" sx={{ fontSize: 20 }} />}
+          </Stack>
+        ))}
+      </Stack>
+    </Paper>
+  );
+}
 
-  return null;
+function formatAcceptedAnswers(correct: { acceptedAnswers: string[] }): string {
+  const label = correct.acceptedAnswers.length > 1 ? "Accepted answers" : "Accepted answer";
+  return `${label}: ${correct.acceptedAnswers.join(", ")}`;
+}
+
+function formatGuess(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "(no answer)";
+  return String(value);
 }

@@ -68,6 +68,15 @@ export interface PlayerJoinAck {
   playerId: string;
   sessionId: string;
   state: SessionState;
+  /**
+   * The in-flight question, when state is "question". Lets a phone that
+   * dropped mid-question (screen lock, wifi blip) land straight back on the
+   * answer screen instead of a blank one - the ack is the only per-socket
+   * message a rejoining player gets, so it has to carry this.
+   */
+  question?: QuestionShowPayload;
+  /** Whether this player already answered the in-flight question, so a rejoin doesn't offer a second attempt. */
+  answered: boolean;
 }
 
 export interface ClientToServerEvents {

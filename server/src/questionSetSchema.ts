@@ -20,6 +20,8 @@ const numberQuestionSchema = z.object({
   max: z.number(),
   step: z.number().positive(),
   correctValue: z.number(),
+  /** Optional; defaults to the slider width (max - min). See scoring.ts. */
+  scoreToleranceValue: z.number().nonnegative().optional(),
 });
 
 const geoQuestionSchema = z.object({
