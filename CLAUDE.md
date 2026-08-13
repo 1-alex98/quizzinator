@@ -109,7 +109,7 @@ iPhone screen-lock mid-question a non-event rather than a dead session.
 
 ## Access control (decided)
 
-There are no accounts, so "who's allowed to do what" rests entirely on two
+There are no accounts, so "who's allowed to do what" rests entirely on
 secrets handed out by the server, with different guessability
 requirements:
 - The **join code** (5 unambiguous uppercase letters/digits, shown on the
@@ -124,6 +124,20 @@ requirements:
   The client keeps it in `sessionStorage` (not the URL/query string), so
   it isn't shown on screen, isn't in browser history, and isn't logged by
   proxies the way a URL would be.
+- The **player token** (a long random secret, returned only in that
+  player's own `player:join` ack) is the same idea one level down. A
+  `playerId` is *public* — it has to be, the leaderboard and every reveal
+  payload carry it to the whole room — so it can't also be proof of who
+  you are. Rejoining under an existing `playerId` requires its token, and
+  `answer:submit` doesn't take a `playerId` at all: the server resolves the
+  answering player from the socket that joined. Without both halves, anyone
+  in the room could rejoin as a rival (taking their name and score) or
+  submit garbage in their name before they answered, since the first
+  submission for a player wins. Player ids are always server-generated; an
+  unknown id in a join is treated as a phone carrying leftovers from a dead
+  session and gets a fresh identity, not an error. The phone keeps the
+  token in `localStorage` next to the id and name, because the unattended
+  rejoin-on-reconnect needs all three.
 - `GET /api/sessions/by-code/:code` (unauthenticated, so effectively
   guessable/brute-forceable given enough requests) deliberately returns
   only `{ code, state }` — never the internal `id` — so it can't be used

@@ -66,6 +66,12 @@ export interface LeaderboardPayload {
 
 export interface PlayerJoinAck {
   playerId: string;
+  /**
+   * This player's secret, sent only on their own socket. Persisted by the
+   * phone and handed back on every rejoin; without it an existing playerId -
+   * which everyone in the room can see - is not enough to claim an identity.
+   */
+  playerToken: string;
   sessionId: string;
   state: SessionState;
   /**
@@ -85,15 +91,17 @@ export interface ClientToServerEvents {
     ack: (res: AckResponse<StateSyncPayload>) => void,
   ) => void;
   "player:join": (
-    payload: { code: string; name: string; playerId?: string },
+    payload: { code: string; name: string; playerId?: string; playerToken?: string },
     ack: (res: AckResponse<PlayerJoinAck>) => void,
   ) => void;
   "session:start": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   "question:next": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   "question:reveal": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   "session:end": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
+  // No playerId: the server resolves the answering player from the socket
+  // that joined, so a player can only ever answer as themselves.
   "answer:submit": (
-    payload: { sessionId: string; playerId: string; value: unknown },
+    payload: { sessionId: string; value: unknown },
     ack?: (res: AckResponse<{ score: number; correct: boolean }>) => void,
   ) => void;
 }

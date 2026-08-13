@@ -56,18 +56,39 @@ export function setQuestionSet(session: QuizSession, questionSet: QuestionSet): 
   session.questionSet = questionSet;
 }
 
+export type UpsertPlayerResult =
+  | { ok: true; player: Player }
+  | { ok: false; error: "invalid_player_token" };
+
 /**
  * Adds a player, or returns the existing one if `playerId` matches an
  * existing session member — this is what lets a dropped phone rejoin under
  * its persisted id instead of showing up as a brand new player.
+ *
+ * Claiming an existing id requires that player's `token`: the id alone is
+ * public (it rides along in every leaderboard), so without this anyone in
+ * the room could rejoin as anyone else and take over their name and score.
+ * An unknown id gets a fresh, server-generated player rather than an error —
+ * that's a phone carrying a stale id from a session that no longer exists,
+ * which is a normal restart, not an attack. Ids are never taken from the
+ * client, so a chosen id can't squat on someone else's identity either.
  */
-export function upsertPlayer(session: QuizSession, name: string, playerId?: string): Player {
-  if (playerId) {
-    const existing = session.players.get(playerId);
-    if (existing) return existing;
+export function upsertPlayer(
+  session: QuizSession,
+  name: string,
+  playerId?: string,
+  playerToken?: string,
+): UpsertPlayerResult {
+  const existing = playerId ? session.players.get(playerId) : undefined;
+  if (existing) {
+    if (!playerToken || playerToken !== existing.token) {
+      return { ok: false, error: "invalid_player_token" };
+    }
+    return { ok: true, player: existing };
   }
   const player: Player = {
-    id: playerId ?? nanoid(12),
+    id: nanoid(12),
+    token: nanoid(24),
     name,
     socketId: null,
     connected: false,
@@ -75,5 +96,5 @@ export function upsertPlayer(session: QuizSession, name: string, playerId?: stri
     graceTimeout: null,
   };
   session.players.set(player.id, player);
-  return player;
+  return { ok: true, player };
 }

@@ -45,6 +45,13 @@ function playerNameKey(code: string): string {
   return `quizzinator:player-name:${code}`;
 }
 
+// The id is public - it is in every leaderboard - so rejoining under it also
+// requires this secret, issued in the join ack. Persisted next to the id and
+// name so the unattended rejoin above still works after a screen lock.
+function playerTokenKey(code: string): string {
+  return `quizzinator:player-token:${code}`;
+}
+
 // Mobile participant app. One phase fills the screen at a time. The geo
 // question type takes over the full screen for its map (see GeoMapInput);
 // number and fuzzy-text share the generic centered "screen" layout.
@@ -87,6 +94,7 @@ export function PlayView() {
 
     const applyJoinAck = (data: PlayerJoinAck) => {
       localStorage.setItem(playerIdKey(code), data.playerId);
+      localStorage.setItem(playerTokenKey(code), data.playerToken);
       setPlayerId(data.playerId);
       setSessionId(data.sessionId);
       if (data.state === "question" && data.question) {
@@ -96,10 +104,26 @@ export function PlayView() {
       setPhase(data.state === "ended" ? "ended" : data.state === "reveal" ? "between" : "waiting");
     };
 
-    const joinAsPlayer = (playerName: string) => {
+    const joinAsPlayer = (playerName: string, allowRetry = true) => {
       const existingPlayerId = localStorage.getItem(playerIdKey(code)) ?? undefined;
-      socket.emit("player:join", { code, name: playerName, playerId: existingPlayerId }, (res) => {
+      const existingPlayerToken = localStorage.getItem(playerTokenKey(code)) ?? undefined;
+      const payload = {
+        code,
+        name: playerName,
+        playerId: existingPlayerId,
+        playerToken: existingPlayerToken,
+      };
+      socket.emit("player:join", payload, (res) => {
         if (!res.ok) {
+          // A persisted id whose token no longer matches (storage half-cleared,
+          // an id copied between phones). Better to come back as a fresh
+          // player than to strand this phone on an error screen mid-party.
+          if (res.error === "invalid_player_token" && allowRetry) {
+            localStorage.removeItem(playerIdKey(code));
+            localStorage.removeItem(playerTokenKey(code));
+            joinAsPlayer(playerName, false);
+            return;
+          }
           setError(res.error);
           return;
         }
@@ -185,7 +209,8 @@ export function PlayView() {
 
   const submitAnswer = (value: unknown) => {
     if (!sessionId || !playerId) return;
-    getSocket().emit("answer:submit", { sessionId, playerId, value }, (res) => {
+    // No playerId on the wire: the server takes it from this socket's join.
+    getSocket().emit("answer:submit", { sessionId, value }, (res) => {
       if (res && !res.ok) {
         setError(res.error);
         return;

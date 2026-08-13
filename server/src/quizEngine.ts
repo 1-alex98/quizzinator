@@ -223,7 +223,7 @@ export function registerQuizEngine(io: IoServer): void {
       ack(ok(buildStateSync(session)));
     });
 
-    socket.on("player:join", ({ code, name, playerId }, ack) => {
+    socket.on("player:join", ({ code, name, playerId, playerToken }, ack) => {
       const session = getSessionByCode(code);
       if (!session) {
         ack(fail("session_not_found"));
@@ -235,7 +235,12 @@ export function registerQuizEngine(io: IoServer): void {
         return;
       }
 
-      const player = upsertPlayer(session, trimmedName, playerId);
+      const result = upsertPlayer(session, trimmedName, playerId, playerToken);
+      if (!result.ok) {
+        ack(fail(result.error));
+        return;
+      }
+      const player = result.player;
       if (player.graceTimeout) {
         clearTimeout(player.graceTimeout);
         player.graceTimeout = null;
@@ -249,6 +254,9 @@ export function registerQuizEngine(io: IoServer): void {
       ack(
         ok({
           playerId: player.id,
+          // Only ever sent here, on this player's own socket - never in a
+          // broadcast, so the rest of the room can't rejoin as them.
+          playerToken: player.token,
           sessionId: session.id,
           state: session.state,
           question: session.state === "question" ? buildQuestionShowPayload(session) : undefined,
@@ -310,14 +318,23 @@ export function registerQuizEngine(io: IoServer): void {
       ack?.(ok(null));
     });
 
-    socket.on("answer:submit", ({ sessionId, playerId, value }, ack) => {
+    socket.on("answer:submit", ({ sessionId, value }, ack) => {
+      // Who is answering comes from the socket's own join, never from the
+      // payload: a playerId is public, so trusting one here would let anyone
+      // in the room submit as a rival and burn their answer for them.
+      const entry = socketRegistry.get(socket.id);
+      if (!entry || entry.isHost || !entry.playerId || entry.sessionId !== sessionId) {
+        ack?.(fail("not_joined"));
+        return;
+      }
+      const playerId = entry.playerId;
+
       const session = getSession(sessionId);
       if (!session || session.state !== "question") {
         ack?.(fail("not_accepting_answers"));
         return;
       }
-      const player = session.players.get(playerId);
-      if (!player) {
+      if (!session.players.has(playerId)) {
         ack?.(fail("unknown_player"));
         return;
       }
