@@ -60,6 +60,13 @@ export type SessionState = "lobby" | "question" | "reveal" | "ended";
 export interface Player {
   id: string;
   name: string;
+  /**
+   * Secret returned only in this player's own player:join ack, and required
+   * to rejoin under an existing id. The id itself is public - it is in every
+   * leaderboard and reveal payload the whole room receives - so it can't
+   * double as proof of who you are; this can.
+   */
+  token: string;
   socketId: string | null;
   connected: boolean;
   score: number;

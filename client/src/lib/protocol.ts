@@ -73,6 +73,8 @@ export interface LeaderboardPayload {
 
 export interface PlayerJoinAck {
   playerId: string;
+  /** This player's secret, sent only on their own socket; needed to rejoin under the same playerId. */
+  playerToken: string;
   sessionId: string;
   state: SessionState;
   /** The in-flight question, when state is "question", so a rejoining phone lands back on the answer screen. */
@@ -87,15 +89,17 @@ export interface ClientToServerEvents {
     ack: (res: AckResponse<StateSyncPayload>) => void,
   ) => void;
   "player:join": (
-    payload: { code: string; name: string; playerId?: string },
+    payload: { code: string; name: string; playerId?: string; playerToken?: string },
     ack: (res: AckResponse<PlayerJoinAck>) => void,
   ) => void;
   "session:start": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   "question:next": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   "question:reveal": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   "session:end": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
+  // No playerId: the server resolves the answering player from the socket
+  // that joined, so a player can only ever answer as themselves.
   "answer:submit": (
-    payload: { sessionId: string; playerId: string; value: unknown },
+    payload: { sessionId: string; value: unknown },
     ack?: (res: AckResponse<{ score: number; correct: boolean }>) => void,
   ) => void;
 }

@@ -135,18 +135,18 @@ describe("quiz engine", () => {
     expect(aliceQuestion.question.id).toBe("q1");
 
     const firstProgress = waitForEvent(host, "question:progress");
-    const aliceAnswerAck = await emitAck(alice, "answer:submit", { sessionId, playerId: alicePlayerId, value: 50 });
+    const aliceAnswerAck = await emitAck(alice, "answer:submit", { sessionId, value: 50 });
     expect(aliceAnswerAck).toEqual({ ok: true, data: { score: 100, correct: true } });
     expect(await firstProgress).toEqual({ answered: 1, total: 2 });
 
     // Submitting twice for the same question is rejected while still waiting on Bob.
-    const duplicateAck = await emitAck(alice, "answer:submit", { sessionId, playerId: alicePlayerId, value: 10 });
+    const duplicateAck = await emitAck(alice, "answer:submit", { sessionId, value: 10 });
     expect(duplicateAck).toEqual({ ok: false, error: "already_answered" });
 
     // Once the last connected player answers, the question reveals
     // immediately - no manual question:reveal needed.
     const revealed = waitForEvent(host, "question:revealed") as Promise<QuestionRevealedPayload>;
-    const bobAnswerAck = await emitAck(bob, "answer:submit", { sessionId, playerId: bobPlayerId, value: 0 });
+    const bobAnswerAck = await emitAck(bob, "answer:submit", { sessionId, value: 0 });
     expect(bobAnswerAck).toEqual({ ok: true, data: { score: 50, correct: false } });
     const revealPayload = await revealed;
     expect(revealPayload.results).toEqual(
@@ -164,7 +164,7 @@ describe("quiz engine", () => {
 
     // Only Alice answers this time, so the question waits for a manual reveal.
     const secondProgress = waitForEvent(host, "question:progress");
-    await emitAck(alice, "answer:submit", { sessionId, playerId: alicePlayerId, value: 10 });
+    await emitAck(alice, "answer:submit", { sessionId, value: 10 });
     expect(await secondProgress).toEqual({ answered: 1, total: 2 });
 
     const secondReveal = waitForEvent(host, "question:revealed");
@@ -203,8 +203,7 @@ describe("quiz engine", () => {
     const player = connect();
     await Promise.all([waitForEvent(host, "connect" as never), waitForEvent(player, "connect" as never)]);
     await emitAck(host, "host:join", { sessionId, hostToken });
-    const joinAck = (await emitAck(player, "player:join", { code, name: "Alice" })) as AckResponse<PlayerJoinAck>;
-    const playerId = (joinAck as { ok: true; data: PlayerJoinAck }).data.playerId;
+    await emitAck(player, "player:join", { code, name: "Alice" });
 
     const playerSawQuestion = waitForEvent(player, "question:show");
     await emitAck(host, "session:start", { sessionId });
@@ -212,7 +211,7 @@ describe("quiz engine", () => {
 
     // The lone connected player answering triggers an automatic reveal.
     const revealed = waitForEvent(host, "question:revealed") as Promise<QuestionRevealedPayload>;
-    await emitAck(player, "answer:submit", { sessionId, playerId, value: { lat: 52.0, lng: 13.405 } });
+    await emitAck(player, "answer:submit", { sessionId, value: { lat: 52.0, lng: 13.405 } });
     const revealPayload = await revealed;
 
     expect(revealPayload.results[0].distanceKm).toBeCloseTo(57.85, 0);
@@ -250,6 +249,130 @@ describe("quiz engine", () => {
     impostor.disconnect();
   });
 
+  // Every phone in the room learns every other playerId - they ride along in
+  // state:sync and question:revealed - so the id alone must not be enough to
+  // claim someone else's identity or answer in their name.
+  it("refuses to hand an existing player's identity to a socket without their playerToken", async () => {
+    const { code } = await createLobby(numberQuestions);
+
+    const alice = connect();
+    const mallory = connect();
+    await Promise.all([waitForEvent(alice, "connect" as never), waitForEvent(mallory, "connect" as never)]);
+
+    const aliceJoin = (await emitAck(alice, "player:join", { code, name: "Alice" })) as AckResponse<PlayerJoinAck>;
+    const { playerId: aliceId, playerToken: aliceToken } = (aliceJoin as { ok: true; data: PlayerJoinAck }).data;
+
+    const noTokenAck = await emitAck(mallory, "player:join", { code, name: "Alice", playerId: aliceId });
+    expect(noTokenAck).toEqual({ ok: false, error: "invalid_player_token" });
+
+    const wrongTokenAck = await emitAck(mallory, "player:join", {
+      code,
+      name: "Alice",
+      playerId: aliceId,
+      playerToken: "not-alices-token",
+    });
+    expect(wrongTokenAck).toEqual({ ok: false, error: "invalid_player_token" });
+
+    // Alice herself, with her own token, still gets her own player back.
+    const aliceRejoin = (await emitAck(alice, "player:join", {
+      code,
+      name: "Alice",
+      playerId: aliceId,
+      playerToken: aliceToken,
+    })) as AckResponse<PlayerJoinAck>;
+    expect(aliceRejoin).toMatchObject({ ok: true, data: { playerId: aliceId } });
+
+    alice.disconnect();
+    mallory.disconnect();
+  });
+
+  // An unknown id is a phone carrying leftovers from a session that no longer
+  // exists, not an attack - it gets a fresh, server-issued identity.
+  it("issues a new server-generated identity for a playerId the session doesn't know", async () => {
+    const { code } = await createLobby(numberQuestions);
+    const player = connect();
+    await waitForEvent(player, "connect" as never);
+
+    const ack = (await emitAck(player, "player:join", {
+      code,
+      name: "Alice",
+      playerId: "stale-id-from-a-dead-session",
+    })) as AckResponse<PlayerJoinAck>;
+    expect(ack.ok).toBe(true);
+    expect((ack as { ok: true; data: PlayerJoinAck }).data.playerId).not.toBe("stale-id-from-a-dead-session");
+
+    player.disconnect();
+  });
+
+  it("scores an answer against the socket that joined, ignoring any playerId in the payload", async () => {
+    const { sessionId, code, hostToken } = await createLobby(numberQuestions);
+
+    const host = connect();
+    const alice = connect();
+    const mallory = connect();
+    await Promise.all([
+      waitForEvent(host, "connect" as never),
+      waitForEvent(alice, "connect" as never),
+      waitForEvent(mallory, "connect" as never),
+    ]);
+    await emitAck(host, "host:join", { sessionId, hostToken });
+
+    const aliceJoin = (await emitAck(alice, "player:join", { code, name: "Alice" })) as AckResponse<PlayerJoinAck>;
+    const aliceId = (aliceJoin as { ok: true; data: PlayerJoinAck }).data.playerId;
+    const malloryJoin = (await emitAck(mallory, "player:join", {
+      code,
+      name: "Mallory",
+    })) as AckResponse<PlayerJoinAck>;
+    const malloryId = (malloryJoin as { ok: true; data: PlayerJoinAck }).data.playerId;
+
+    const questionShown = waitForEvent(alice, "question:show");
+    await emitAck(host, "session:start", { sessionId });
+    await questionShown;
+
+    // A hostile client sending the field the protocol no longer has, trying to
+    // burn Alice's answer before she gets to it.
+    const forgedAck = await emitAck(mallory, "answer:submit", {
+      sessionId,
+      value: 0,
+      playerId: aliceId,
+    } as never);
+    expect(forgedAck).toEqual({ ok: true, data: { score: 50, correct: false } });
+
+    // Alice's own answer still lands - and scores for her.
+    const revealed = waitForEvent(host, "question:revealed") as Promise<QuestionRevealedPayload>;
+    const aliceAck = await emitAck(alice, "answer:submit", { sessionId, value: 50 });
+    expect(aliceAck).toEqual({ ok: true, data: { score: 100, correct: true } });
+
+    const revealPayload = await revealed;
+    expect(revealPayload.results).toEqual(
+      expect.arrayContaining([
+        { playerId: aliceId, value: 50, score: 100, correct: true, totalScore: 100 },
+        { playerId: malloryId, value: 0, score: 50, correct: false, totalScore: 50 },
+      ]),
+    );
+
+    host.disconnect();
+    alice.disconnect();
+    mallory.disconnect();
+  });
+
+  it("rejects an answer from a socket that never joined the session", async () => {
+    const { sessionId, hostToken } = await createLobby(numberQuestions);
+
+    const host = connect();
+    const lurker = connect();
+    await Promise.all([waitForEvent(host, "connect" as never), waitForEvent(lurker, "connect" as never)]);
+    await emitAck(host, "host:join", { sessionId, hostToken });
+    await emitAck(host, "session:start", { sessionId });
+
+    const ack = await emitAck(lurker, "answer:submit", { sessionId, value: 50 });
+    expect(ack).toEqual({ ok: false, error: "not_joined" });
+
+    await emitAck(host, "session:end", { sessionId });
+    host.disconnect();
+    lurker.disconnect();
+  });
+
   it("refuses to start a lobby with no question set", async () => {
     const created = await request(app).post("/api/sessions");
     const sessionId = created.body.id as string;
@@ -275,7 +398,7 @@ describe("quiz engine", () => {
     let player = connect();
     await waitForEvent(player, "connect" as never);
     const joinAck = (await emitAck(player, "player:join", { code, name: "Bob" })) as AckResponse<PlayerJoinAck>;
-    const playerId = (joinAck as { ok: true; data: PlayerJoinAck }).data.playerId;
+    const { playerId, playerToken } = (joinAck as { ok: true; data: PlayerJoinAck }).data;
 
     const questionShown = waitForEvent(player, "question:show");
     await emitAck(host, "session:start", { sessionId });
@@ -283,7 +406,7 @@ describe("quiz engine", () => {
 
     // The lone connected player answering triggers an automatic reveal.
     const revealed = waitForEvent(host, "question:revealed");
-    await emitAck(player, "answer:submit", { sessionId, playerId, value: 50 });
+    await emitAck(player, "answer:submit", { sessionId, value: 50 });
     await revealed;
 
     const disconnectSync = waitForEvent(host, "state:sync");
@@ -298,10 +421,11 @@ describe("quiz engine", () => {
       code,
       name: "Bob",
       playerId,
+      playerToken,
     })) as AckResponse<PlayerJoinAck>;
     expect(rejoinAck).toEqual({
       ok: true,
-      data: { playerId, sessionId, state: "reveal", answered: false },
+      data: { playerId, playerToken, sessionId, state: "reveal", answered: false },
     });
 
     const afterReconnect = await reconnectSync;
@@ -328,7 +452,7 @@ describe("quiz engine", () => {
     const bob = connect();
     await Promise.all([waitForEvent(alice, "connect" as never), waitForEvent(bob, "connect" as never)]);
     const aliceJoin = (await emitAck(alice, "player:join", { code, name: "Alice" })) as AckResponse<PlayerJoinAck>;
-    const aliceId = (aliceJoin as { ok: true; data: PlayerJoinAck }).data.playerId;
+    const { playerId: aliceId, playerToken: aliceToken } = (aliceJoin as { ok: true; data: PlayerJoinAck }).data;
     await emitAck(bob, "player:join", { code, name: "Bob" });
 
     const questionShown = waitForEvent(alice, "question:show");
@@ -343,6 +467,7 @@ describe("quiz engine", () => {
       code,
       name: "Alice",
       playerId: aliceId,
+      playerToken: aliceToken,
     })) as AckResponse<PlayerJoinAck>;
     expect(beforeAnswering).toMatchObject({
       ok: true,
@@ -350,7 +475,7 @@ describe("quiz engine", () => {
     });
 
     // Drops after answering: must not be offered a second attempt.
-    await emitAck(alice, "answer:submit", { sessionId, playerId: aliceId, value: 42 });
+    await emitAck(alice, "answer:submit", { sessionId, value: 42 });
     alice.disconnect();
     alice = connect();
     await waitForEvent(alice, "connect" as never);
@@ -358,6 +483,7 @@ describe("quiz engine", () => {
       code,
       name: "Alice",
       playerId: aliceId,
+      playerToken: aliceToken,
     })) as AckResponse<PlayerJoinAck>;
     expect(afterAnswering).toMatchObject({ ok: true, data: { state: "question", answered: true } });
 
@@ -375,8 +501,7 @@ describe("quiz engine", () => {
 
     const alice = connect();
     await waitForEvent(alice, "connect" as never);
-    const aliceJoinAck = (await emitAck(alice, "player:join", { code, name: "Alice" })) as AckResponse<PlayerJoinAck>;
-    const alicePlayerId = (aliceJoinAck as { ok: true; data: PlayerJoinAck }).data.playerId;
+    await emitAck(alice, "player:join", { code, name: "Alice" });
 
     const bob = connect();
     await waitForEvent(bob, "connect" as never);
@@ -393,7 +518,7 @@ describe("quiz engine", () => {
     // Bob left, so Alice is now the only connected player - her answer alone
     // should be enough to trigger the reveal, without waiting for Bob.
     const revealed = waitForEvent(host, "question:revealed");
-    await emitAck(alice, "answer:submit", { sessionId, playerId: alicePlayerId, value: 50 });
+    await emitAck(alice, "answer:submit", { sessionId, value: 50 });
     await revealed;
 
     host.disconnect();

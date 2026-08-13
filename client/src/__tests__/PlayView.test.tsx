@@ -64,7 +64,7 @@ function captureSocketHandlers() {
 function joinAndReachAnswering(code: string, question: unknown) {
   socketMock.emit.mockImplementation((event, _payload, ack) => {
     if (event === "player:join") {
-      ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby", answered: false } });
+      ack({ ok: true, data: { playerId: "p1", playerToken: "t1", sessionId: "s1", state: "lobby", answered: false } });
     }
   });
   const handlers = captureSocketHandlers();
@@ -107,28 +107,58 @@ describe("PlayView", () => {
 
     expect(socketMock.emit).toHaveBeenCalledWith(
       "player:join",
-      { code: "ABCDE", name: "Alice", playerId: undefined },
+      { code: "ABCDE", name: "Alice", playerId: undefined, playerToken: undefined },
       expect.any(Function),
     );
   });
 
   it("reuses a persisted player id from a previous join", () => {
     localStorage.setItem("quizzinator:player:ABCDE", "player-42");
+    localStorage.setItem("quizzinator:player-token:ABCDE", "token-42");
     renderAt("ABCDE");
     fireEvent.change(screen.getByPlaceholderText("Your name"), { target: { value: "Alice" } });
     fireEvent.click(screen.getByText("Join"));
 
     expect(socketMock.emit).toHaveBeenCalledWith(
       "player:join",
-      { code: "ABCDE", name: "Alice", playerId: "player-42" },
+      { code: "ABCDE", name: "Alice", playerId: "player-42", playerToken: "token-42" },
       expect.any(Function),
     );
+  });
+
+  // Persisted credentials the server won't accept (storage half-cleared, an id
+  // copied between phones) must not strand the phone on an error screen.
+  it("drops a rejected identity and re-joins as a fresh player", () => {
+    localStorage.setItem("quizzinator:player:ABCDE", "p-stale");
+    localStorage.setItem("quizzinator:player-token:ABCDE", "t-stale");
+    const joins: unknown[] = [];
+    socketMock.emit.mockImplementation((event, payload, ack) => {
+      if (event !== "player:join") return;
+      joins.push(payload);
+      if (joins.length === 1) {
+        ack({ ok: false, error: "invalid_player_token" });
+        return;
+      }
+      ack({ ok: true, data: { playerId: "p2", playerToken: "t2", sessionId: "s1", state: "lobby", answered: false } });
+    });
+
+    renderAt("ABCDE");
+    fireEvent.change(screen.getByPlaceholderText("Your name"), { target: { value: "Alice" } });
+    fireEvent.click(screen.getByText("Join"));
+
+    expect(joins).toEqual([
+      { code: "ABCDE", name: "Alice", playerId: "p-stale", playerToken: "t-stale" },
+      { code: "ABCDE", name: "Alice", playerId: undefined, playerToken: undefined },
+    ]);
+    expect(screen.getByText("Waiting for the host to start…")).toBeTruthy();
+    expect(localStorage.getItem("quizzinator:player:ABCDE")).toBe("p2");
+    expect(localStorage.getItem("quizzinator:player-token:ABCDE")).toBe("t2");
   });
 
   it("moves to the waiting screen once the join ack resolves", () => {
     socketMock.emit.mockImplementation((event, _payload, ack) => {
       if (event === "player:join") {
-        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby", answered: false } });
+        ack({ ok: true, data: { playerId: "p1", playerToken: "t1", sessionId: "s1", state: "lobby", answered: false } });
       }
     });
 
@@ -160,7 +190,7 @@ describe("PlayView", () => {
     fireEvent.click(screen.getByText("Submit"));
     expect(socketMock.emit).toHaveBeenCalledWith(
       "answer:submit",
-      { sessionId: "s1", playerId: "p1", value: 42 },
+      { sessionId: "s1", value: 42 },
       expect.any(Function),
     );
   });
@@ -188,7 +218,7 @@ describe("PlayView", () => {
     fireEvent.click(confirm);
     expect(socketMock.emit).toHaveBeenCalledWith(
       "answer:submit",
-      { sessionId: "s1", playerId: "p1", value: { lat: 12.5, lng: -3.2 } },
+      { sessionId: "s1", value: { lat: 12.5, lng: -3.2 } },
       expect.any(Function),
     );
   });
@@ -211,7 +241,7 @@ describe("PlayView", () => {
     fireEvent.click(submit);
     expect(socketMock.emit).toHaveBeenCalledWith(
       "answer:submit",
-      { sessionId: "s1", playerId: "p1", value: "Marie Curie" },
+      { sessionId: "s1", value: "Marie Curie" },
       expect.any(Function),
     );
   });
@@ -230,7 +260,7 @@ describe("PlayView", () => {
 
     expect(socketMock.emit).toHaveBeenCalledWith(
       "answer:submit",
-      { sessionId: "s1", playerId: "p1", value: "Marie Curie" },
+      { sessionId: "s1", value: "Marie Curie" },
       expect.any(Function),
     );
   });
@@ -252,7 +282,7 @@ describe("PlayView", () => {
   it("shows the player's rank after a question reveal", () => {
     socketMock.emit.mockImplementation((event, _payload, ack) => {
       if (event === "player:join") {
-        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby", answered: false } });
+        ack({ ok: true, data: { playerId: "p1", playerToken: "t1", sessionId: "s1", state: "lobby", answered: false } });
       }
     });
     const handlers = captureSocketHandlers();
@@ -282,6 +312,7 @@ describe("PlayView", () => {
   // question it was answering.
   it("re-joins with the persisted identity on reconnect and restores the in-flight question", () => {
     localStorage.setItem("quizzinator:player:ABCDE", "p1");
+    localStorage.setItem("quizzinator:player-token:ABCDE", "t1");
     localStorage.setItem("quizzinator:player-name:ABCDE", "Alice");
     socketMock.emit.mockImplementation((event, _payload, ack) => {
       if (event === "player:join") {
@@ -289,6 +320,7 @@ describe("PlayView", () => {
           ok: true,
           data: {
             playerId: "p1",
+            playerToken: "t1",
             sessionId: "s1",
             state: "question",
             answered: false,
@@ -309,7 +341,7 @@ describe("PlayView", () => {
     // Rejoined without showing the join form again...
     expect(socketMock.emit).toHaveBeenCalledWith(
       "player:join",
-      { code: "ABCDE", name: "Alice", playerId: "p1" },
+      { code: "ABCDE", name: "Alice", playerId: "p1", playerToken: "t1" },
       expect.any(Function),
     );
     // ...and landed back on the question rather than a blank screen.
@@ -319,6 +351,7 @@ describe("PlayView", () => {
 
   it("shows the waiting-for-others screen when rejoining a question it already answered", () => {
     localStorage.setItem("quizzinator:player:ABCDE", "p1");
+    localStorage.setItem("quizzinator:player-token:ABCDE", "t1");
     localStorage.setItem("quizzinator:player-name:ABCDE", "Alice");
     socketMock.emit.mockImplementation((event, _payload, ack) => {
       if (event === "player:join") {
@@ -326,6 +359,7 @@ describe("PlayView", () => {
           ok: true,
           data: {
             playerId: "p1",
+            playerToken: "t1",
             sessionId: "s1",
             state: "question",
             answered: true,
@@ -350,7 +384,7 @@ describe("PlayView", () => {
   it("shows the player's final rank on the ended screen", () => {
     socketMock.emit.mockImplementation((event, _payload, ack) => {
       if (event === "player:join") {
-        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby", answered: false } });
+        ack({ ok: true, data: { playerId: "p1", playerToken: "t1", sessionId: "s1", state: "lobby", answered: false } });
       }
     });
     const handlers = captureSocketHandlers();
