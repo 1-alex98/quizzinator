@@ -15,7 +15,7 @@ export function AdminView() {
   const hostWithQuestionSet = async (questionSet: unknown) => {
     const sessionRes = await fetch("/api/sessions", { method: "POST" });
     if (!sessionRes.ok) throw new Error("Could not create the session.");
-    const session = (await sessionRes.json()) as { id: string };
+    const session = (await sessionRes.json()) as { id: string; hostToken: string };
 
     const setRes = await fetch(`/api/sessions/${session.id}/question-set`, {
       method: "PUT",
@@ -24,6 +24,10 @@ export function AdminView() {
     });
     if (!setRes.ok) throw new Error("Could not attach the question set.");
 
+    // Kept in sessionStorage (not the URL/query string) so it isn't shown on
+    // screen, logged by proxies, or left in browser history - host:join
+    // requires it, so only whoever created this session can take control.
+    sessionStorage.setItem(`quizzinator:host-token:${session.id}`, session.hostToken);
     navigate(`/host/${session.id}`);
   };
 

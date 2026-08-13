@@ -24,12 +24,13 @@ describe("AdminView", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    sessionStorage.clear();
     cleanup();
   });
 
   it("creates a session, attaches the built-in test set, and navigates to the host screen", async () => {
     fetchMock
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ id: "s1", code: "ABCDE" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ id: "s1", code: "ABCDE", hostToken: "secret-1" }) })
       .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) });
 
     renderAdmin();
@@ -44,6 +45,10 @@ describe("AdminView", () => {
 
     const body = JSON.parse(options.body);
     expect(body.questions.map((q: { type: string }) => q.type)).toEqual(["number", "geo", "fuzzy-text"]);
+
+    // The host secret is kept in sessionStorage, not the URL - HostView
+    // reads it from here to prove it's the session's creator.
+    expect(sessionStorage.getItem("quizzinator:host-token:s1")).toBe("secret-1");
   });
 
   it("shows an error if the session can't be created", async () => {
@@ -58,7 +63,7 @@ describe("AdminView", () => {
 
   it("shows an error if attaching the question set fails", async () => {
     fetchMock
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ id: "s1", code: "ABCDE" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ id: "s1", code: "ABCDE", hostToken: "secret-1" }) })
       .mockResolvedValueOnce({ ok: false });
 
     renderAdmin();
@@ -71,7 +76,7 @@ describe("AdminView", () => {
     const parsedSet = { id: "uploaded", title: "Uploaded", questions: [{ id: "q1", type: "number" }] };
     fetchMock
       .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(parsedSet) })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ id: "s1", code: "ABCDE" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ id: "s1", code: "ABCDE", hostToken: "secret-1" }) })
       .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) });
 
     renderAdmin();

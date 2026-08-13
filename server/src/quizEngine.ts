@@ -207,10 +207,14 @@ export function registerQuizEngine(io: IoServer): void {
   }
 
   io.on("connection", (socket: IoSocket) => {
-    socket.on("host:join", ({ sessionId }, ack) => {
+    socket.on("host:join", ({ sessionId, hostToken }, ack) => {
       const session = getSession(sessionId);
       if (!session) {
         ack(fail("session_not_found"));
+        return;
+      }
+      if (hostToken !== session.hostToken) {
+        ack(fail("not_host"));
         return;
       }
       session.hostSocketId = socket.id;

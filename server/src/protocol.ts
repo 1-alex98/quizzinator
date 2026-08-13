@@ -71,7 +71,10 @@ export interface PlayerJoinAck {
 }
 
 export interface ClientToServerEvents {
-  "host:join": (payload: { sessionId: string }, ack: (res: AckResponse<StateSyncPayload>) => void) => void;
+  "host:join": (
+    payload: { sessionId: string; hostToken: string },
+    ack: (res: AckResponse<StateSyncPayload>) => void,
+  ) => void;
   "player:join": (
     payload: { code: string; name: string; playerId?: string },
     ack: (res: AckResponse<PlayerJoinAck>) => void,

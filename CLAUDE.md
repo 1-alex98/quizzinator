@@ -82,6 +82,28 @@ WebSocket behavior over some proxies/networks is a common source of pain,
 long-polling fallback sidesteps that). The full join/start/answer/reveal
 event protocol is defined by the realtime-engine issue, not this scaffold.
 
+## Access control (decided)
+
+There are no accounts, so "who's allowed to do what" rests entirely on two
+secrets handed out by the server, with different guessability
+requirements:
+- The **join code** (5 unambiguous uppercase letters/digits, shown on the
+  TV and typed by players) only lets you join a lobby as a player — low
+  stakes, and it's short on purpose so people can read/type it off a
+  screen.
+- The **host token** (a long random secret, returned only in the
+  `POST /api/sessions` response body to whoever created the session) is
+  required by the `host:join` socket event. Without it, knowing/guessing a
+  session's id or join code is *not* enough to take over hosting — you
+  can't reveal answers, skip questions, or end someone else's quiz early.
+  The client keeps it in `sessionStorage` (not the URL/query string), so
+  it isn't shown on screen, isn't in browser history, and isn't logged by
+  proxies the way a URL would be.
+- `GET /api/sessions/by-code/:code` (unauthenticated, so effectively
+  guessable/brute-forceable given enough requests) deliberately returns
+  only `{ code, state }` — never the internal `id` — so it can't be used
+  to escalate a guessed join code into the sessionId `host:join` needs.
+
 ## Tech stack (decided)
 
 - **Monorepo**, npm workspaces: `server/` (Express + TypeScript, ESM) and

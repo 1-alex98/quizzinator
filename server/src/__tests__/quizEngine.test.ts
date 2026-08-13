@@ -61,11 +61,12 @@ describe("quiz engine", () => {
     const created = await request(app).post("/api/sessions");
     const sessionId = created.body.id as string;
     const code = created.body.code as string;
+    const hostToken = created.body.hostToken as string;
     await request(app)
       .put(`/api/sessions/${sessionId}/question-set`)
       .send({ id: "set-1", title: "Test set", questions })
       .expect(200);
-    return { sessionId, code };
+    return { sessionId, code, hostToken };
   }
 
   const numberQuestions = [
@@ -94,7 +95,7 @@ describe("quiz engine", () => {
   ];
 
   it("runs a full lobby -> question -> reveal -> ended flow, auto-revealing once every connected player has answered", async () => {
-    const { sessionId, code } = await createLobby(numberQuestions);
+    const { sessionId, code, hostToken } = await createLobby(numberQuestions);
 
     const host = connect();
     const alice = connect();
@@ -105,7 +106,7 @@ describe("quiz engine", () => {
       waitForEvent(bob, "connect" as never),
     ]);
 
-    const hostAck = await emitAck(host, "host:join", { sessionId });
+    const hostAck = await emitAck(host, "host:join", { sessionId, hostToken });
     expect(hostAck.ok).toBe(true);
     expect((hostAck as { ok: true; data: StateSyncPayload }).data.state).toBe("lobby");
 
@@ -196,12 +197,12 @@ describe("quiz engine", () => {
         maxDistanceKm: 100,
       },
     ];
-    const { sessionId, code } = await createLobby(geoQuestions);
+    const { sessionId, code, hostToken } = await createLobby(geoQuestions);
 
     const host = connect();
     const player = connect();
     await Promise.all([waitForEvent(host, "connect" as never), waitForEvent(player, "connect" as never)]);
-    await emitAck(host, "host:join", { sessionId });
+    await emitAck(host, "host:join", { sessionId, hostToken });
     const joinAck = (await emitAck(player, "player:join", { code, name: "Alice" })) as AckResponse<PlayerJoinAck>;
     const playerId = (joinAck as { ok: true; data: PlayerJoinAck }).data.playerId;
 
@@ -231,13 +232,32 @@ describe("quiz engine", () => {
     impostor.disconnect();
   });
 
+  it("rejects host:join with a missing or wrong hostToken", async () => {
+    const { sessionId, hostToken } = await createLobby(numberQuestions);
+    const impostor = connect();
+    await waitForEvent(impostor, "connect" as never);
+
+    const wrongTokenAck = await emitAck(impostor, "host:join", { sessionId, hostToken: "wrong-token" });
+    expect(wrongTokenAck).toEqual({ ok: false, error: "not_host" });
+
+    // Knowing the sessionId still isn't enough to then run host-only commands.
+    const startAck = await emitAck(impostor, "session:start", { sessionId });
+    expect(startAck).toEqual({ ok: false, error: "not_host" });
+
+    const correctAck = await emitAck(impostor, "host:join", { sessionId, hostToken });
+    expect(correctAck.ok).toBe(true);
+
+    impostor.disconnect();
+  });
+
   it("refuses to start a lobby with no question set", async () => {
     const created = await request(app).post("/api/sessions");
     const sessionId = created.body.id as string;
+    const hostToken = created.body.hostToken as string;
 
     const host = connect();
     await waitForEvent(host, "connect" as never);
-    await emitAck(host, "host:join", { sessionId });
+    await emitAck(host, "host:join", { sessionId, hostToken });
 
     const ack = await emitAck(host, "session:start", { sessionId });
     expect(ack).toEqual({ ok: false, error: "no_question_set" });
@@ -246,11 +266,11 @@ describe("quiz engine", () => {
   });
 
   it("keeps a reconnecting player's identity and score", async () => {
-    const { sessionId, code } = await createLobby(numberQuestions);
+    const { sessionId, code, hostToken } = await createLobby(numberQuestions);
 
     const host = connect();
     await waitForEvent(host, "connect" as never);
-    await emitAck(host, "host:join", { sessionId });
+    await emitAck(host, "host:join", { sessionId, hostToken });
 
     let player = connect();
     await waitForEvent(player, "connect" as never);
@@ -290,11 +310,11 @@ describe("quiz engine", () => {
   });
 
   it("auto-reveals based on connected players only, ignoring a disconnected player", async () => {
-    const { sessionId, code } = await createLobby(numberQuestions);
+    const { sessionId, code, hostToken } = await createLobby(numberQuestions);
 
     const host = connect();
     await waitForEvent(host, "connect" as never);
-    await emitAck(host, "host:join", { sessionId });
+    await emitAck(host, "host:join", { sessionId, hostToken });
 
     const alice = connect();
     await waitForEvent(alice, "connect" as never);
@@ -324,11 +344,11 @@ describe("quiz engine", () => {
   });
 
   it("auto-reveals once the server-driven timer runs out", async () => {
-    const { sessionId } = await createLobby([{ ...numberQuestions[0], timeLimitSec: 1.2 }]);
+    const { sessionId, hostToken } = await createLobby([{ ...numberQuestions[0], timeLimitSec: 1.2 }]);
 
     const host = connect();
     await waitForEvent(host, "connect" as never);
-    await emitAck(host, "host:join", { sessionId });
+    await emitAck(host, "host:join", { sessionId, hostToken });
 
     const tick = waitForEvent(host, "timer:tick");
     const revealed = waitForEvent(host, "question:revealed");
