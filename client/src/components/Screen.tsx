@@ -15,7 +15,8 @@ export function Screen({
 }: {
   children: ReactNode;
   phaseKey?: string;
-  gap?: number;
+  /** Theme spacing units, or any CSS length - the answer screen scales its gap with the viewport. */
+  gap?: number | string;
   sx?: SxProps<Theme>;
 }) {
   return (

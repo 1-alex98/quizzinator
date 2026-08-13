@@ -85,6 +85,27 @@ rather than the same fixed fraction. Two consequences worth knowing:
   its image, and hiding the image shrinks the card back to a line of text
   rather than leaving an empty box over the map.
 
+**"Whatever is left" needs a floor, or it reaches zero.** Sized purely by the
+leftovers, a multiple-choice question on a phone gave its picture a 30px sliver
+— and nothing at all on a 320px-wide screen, which reads as a broken image
+rather than as a tight layout. So the image frame carries a `min-height` of
+`min(20vh, 200px)` and the rest of the answer screen is what yields to it:
+the option rows, their gaps and the type scale are `clamp()`ed against the
+viewport height (never below a 44px tap target), the answer input scrolls
+inside its own box if even that is not enough, and **Submit sits outside that
+box** — the one control a player must always reach can't be the thing that
+scrolled off. The prompt block is `flex: 1 1 auto` with an auto `min-height`
+for the same reason: it still grows into spare space, but a block that shrank
+below its own contents would paint the prompt over the first answer option.
+
+**A URL that doesn't load says so.** `media.imageUrl` points at the open
+internet, and sets written by an LLM routinely carry URLs that 404 (or hosts
+that refuse hotlinking, or a phone that is on the venue wifi but not online).
+The `onError` path drops the frame and puts one line — "This question's image
+could not be loaded." — where the picture would have been, so the question is
+still answerable and the host knows why. It's keyed by URL, not a flag, so the
+next question's image still gets its own chance to load.
+
 ## Question set delivery (decided)
 
 A question set is either:
