@@ -1,12 +1,21 @@
 // Built-in question set covering every question type the app currently
-// supports (number, geo, fuzzy-text). Used by the "start quiz with test
-// data" button in AdminView as a quick way to try the app without preparing
-// a real upload. Validated server-side against the same questionSetSchema a
-// real upload goes through.
+// supports (multiple-choice, number, geo, fuzzy-text). Used by the "start
+// quiz with test data" button in AdminView as a quick way to try the app
+// without preparing a real upload. Validated server-side against the same
+// questionSetSchema a real upload goes through.
 export const TEST_QUESTION_SET = {
   id: "quizzinator-test-set",
   title: "Quizzinator Test Set",
   questions: [
+    {
+      id: "q-choice",
+      type: "multiple-choice",
+      prompt: "Which of these came out first?",
+      points: 100,
+      timeLimitSec: 30,
+      options: ["The Walkman", "The CD player", "The iPod", "The MiniDisc"],
+      correctIndex: 0,
+    },
     {
       id: "q-number",
       type: "number",

@@ -124,3 +124,98 @@ describe("POST /api/question-sets", () => {
   });
 });
 
+
+describe("GET /api/question-set-schema", () => {
+  it("publishes a JSON Schema describing every question type", async () => {
+    const app = createApp();
+    const res = await request(app).get("/api/question-set-schema");
+
+    expect(res.status).toBe(200);
+    expect(res.body.$schema).toBe("http://json-schema.org/draft-07/schema#");
+    const variants = res.body.properties.questions.items.anyOf as Array<{
+      properties: { type: { const: string } };
+    }>;
+    expect(variants.map((v) => v.properties.type.const).sort()).toEqual([
+      "fuzzy-text",
+      "geo",
+      "multiple-choice",
+      "number",
+    ]);
+    // Descriptions are the point of publishing this at all - it is written to
+    // be pasted into an LLM, which needs to know what scoreToleranceValue is.
+    const numberVariant = variants.find((v) => v.properties.type.const === "number") as {
+      properties: Record<string, { description?: string }>;
+    };
+    expect(numberVariant.properties.scoreToleranceValue.description).toContain("linear falloff");
+  });
+
+  // The schema is generated from the same zod schema the upload runs through,
+  // so a set built to it must import. The bundled example is the cheapest
+  // possible end-to-end check that the two have not drifted apart.
+  it("bundles an example that the real upload endpoint accepts", async () => {
+    const app = createApp();
+    const schemaRes = await request(app).get("/api/question-set-schema");
+    const example = schemaRes.body.examples[0];
+
+    const res = await request(app)
+      .post("/api/question-sets")
+      .attach("file", Buffer.from(JSON.stringify(example)), "set.json");
+
+    expect(res.status).toBe(201);
+    expect(res.body.questions).toHaveLength(example.questions.length);
+  });
+});
+
+describe("PUT /api/sessions/:id/question-set", () => {
+  it("accepts a pasted multiple-choice question set", async () => {
+    const app = createApp();
+    const created = await request(app).post("/api/sessions");
+    const res = await request(app)
+      .put(`/api/sessions/${created.body.id}/question-set`)
+      .send({
+        id: "set-1",
+        title: "Pasted",
+        questions: [
+          {
+            id: "q1",
+            type: "multiple-choice",
+            prompt: "Which came first?",
+            points: 100,
+            options: ["The Walkman", "The CD player"],
+            correctIndex: 1,
+          },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+  });
+
+  // A correctIndex past the end of `options` parses field-by-field but makes
+  // the question unanswerable, so it is caught as a cross-field rule.
+  it("rejects a correctIndex that isn't a valid option, with a readable message", async () => {
+    const app = createApp();
+    const created = await request(app).post("/api/sessions");
+    const res = await request(app)
+      .put(`/api/sessions/${created.body.id}/question-set`)
+      .send({
+        id: "set-1",
+        title: "Pasted",
+        questions: [
+          {
+            id: "q1",
+            type: "multiple-choice",
+            prompt: "Which came first?",
+            points: 100,
+            options: ["The Walkman", "The CD player"],
+            correctIndex: 5,
+          },
+        ],
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_question_set");
+    // The admin screen shows this line verbatim when a paste fails.
+    expect(res.body.message).toContain("questions.0.correctIndex");
+    expect(res.body.message).toContain("between 0 and 1");
+  });
+});

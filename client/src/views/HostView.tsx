@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Grow from "@mui/material/Grow";
 import LinearProgress from "@mui/material/LinearProgress";
+import Link from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -15,10 +16,11 @@ import { AppIcon } from "../components/AppIcon.js";
 import { CountdownRing } from "../components/CountdownRing.js";
 import { GeoRevealMap } from "../components/GeoRevealMap.js";
 import { Leaderboard, MAX_VISIBLE_PLAYERS } from "../components/Leaderboard.js";
+import { CopySchemaButton } from "../components/QuestionFormatActions.js";
 import { QuestionPrompt } from "../components/QuestionPrompt.js";
+import { RevealAnswerCard } from "../components/RevealAnswerCard.js";
 import { Screen } from "../components/Screen.js";
 import type {
-  AnswerResult,
   LeaderboardPayload,
   PublicPlayer,
   PublicQuestion,
@@ -39,6 +41,7 @@ function hostTokenKey(sessionId: string): string {
 
 export function HostView() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const [online, setOnline] = useState(true);
   const [phase, setPhase] = useState<SessionState | "loading">("loading");
@@ -62,6 +65,14 @@ export function HostView() {
       if (data.question) {
         setQuestion(data.question);
         setRemainingSec(Math.max(0, Math.round((data.question.endsAt - Date.now()) / 1000)));
+      }
+      // Back in the lobby means a new game on the same set: drop the last
+      // game's question/reveal so replaying it doesn't flash stale results.
+      if (data.state === "lobby") {
+        setQuestion(null);
+        setRevealed(null);
+        setProgress(null);
+        setEnded(null);
       }
     };
 
@@ -159,6 +170,12 @@ export function HostView() {
   const revealNow = () => getSocket().emit("question:reveal", { sessionId });
   const nextQuestion = () => getSocket().emit("question:next", { sessionId });
   const endQuiz = () => getSocket().emit("session:end", { sessionId });
+  // Same session, so the code on screen and every phone already in the room
+  // stay valid - nobody re-scans anything between games.
+  const playAgain = () =>
+    getSocket().emit("session:restart", { sessionId }, (res) => {
+      if (!res.ok) setError(res.error);
+    });
 
   if (phase === "ended") {
     return (
@@ -169,6 +186,22 @@ export function HostView() {
         <Box sx={{ width: "min(100%, 720px)" }}>
           <Leaderboard players={ended?.players ?? players} />
         </Box>
+        {/* The room is still holding their phones at this point: "play again"
+            reuses this session, so everyone stays joined and the code on the
+            wall keeps working. Only a different question set needs /admin. */}
+        <Stack direction={{ xs: "column", sm: "row" }} gap={2} alignItems="center">
+          <Button size="large" onClick={playAgain} startIcon={<AppIcon name="replay" />}>
+            New game, same questions
+          </Button>
+          <Button
+            variant="outlined"
+            color="inherit"
+            onClick={() => navigate("/admin")}
+            startIcon={<AppIcon name="upload_file" />}
+          >
+            New quiz
+          </Button>
+        </Stack>
         <FinalCelebration />
       </Screen>
     );
@@ -254,7 +287,19 @@ export function HostView() {
       <Stack alignItems="center" gap={1}>
         <ConnectionWarning online={online} />
         <Typography variant="h2">Join the quiz</Typography>
-        <Typography color="text.secondary">{joinUrl}</Typography>
+        {/* A real anchor, not styled text: on a laptop plugged into the TV the
+            host wants to click it - to open it, or to right-click and copy the
+            link into a chat - without retyping what's on screen. */}
+        <Link
+          href={joinUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          color="text.secondary"
+          underline="hover"
+          sx={{ wordBreak: "break-all" }}
+        >
+          {joinUrl}
+        </Link>
       </Stack>
 
       <Stack direction={{ xs: "column", sm: "row" }} gap={4} alignItems="center" justifyContent="center">
@@ -285,6 +330,25 @@ export function HostView() {
           </Button>
           <Button variant="text" color="inherit" onClick={endQuiz}>
             End quiz
+          </Button>
+        </Stack>
+
+        {/* Writing the next quiz usually happens while this lobby is already
+            up on the TV, so the format is one click away from here: copy the
+            schema, paste it into an LLM, paste the JSON back on /admin. */}
+        <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" justifyContent="center">
+          <CopySchemaButton size="small" sx={{ minHeight: 40, py: 0.5 }} />
+          <Button
+            component={RouterLink}
+            to="/docs/question-format"
+            target="_blank"
+            variant="text"
+            color="inherit"
+            size="small"
+            startIcon={<AppIcon name="help" fontSize="small" />}
+            sx={{ minHeight: 40, py: 0.5 }}
+          >
+            Question format
           </Button>
         </Stack>
       </Stack>
@@ -355,7 +419,8 @@ function FinalCelebration() {
   return null;
 }
 
-// Per-type "correct answer" display for the reveal phase.
+// Per-type "correct answer" display for the reveal phase: a map for geo,
+// otherwise the shared answer card.
 function QuestionRevealDetail({
   question,
   revealed,
@@ -365,8 +430,6 @@ function QuestionRevealDetail({
   revealed: QuestionRevealedPayload;
   players: PublicPlayer[];
 }) {
-  const nameFor = (playerId: string) => players.find((p) => p.id === playerId)?.name ?? "Player";
-
   if (question.type === "geo") {
     const correct = revealed.correctAnswer as { correctLat: number; correctLng: number };
     const playerNames = new Map(players.map((p) => [p.id, p.name]));
@@ -380,47 +443,5 @@ function QuestionRevealDetail({
     );
   }
 
-  const answerText =
-    question.type === "number"
-      ? `Correct answer: ${(revealed.correctAnswer as { correctValue: number }).correctValue}`
-      : formatAcceptedAnswers(revealed.correctAnswer as { acceptedAnswers: string[] });
-
-  return (
-    <Paper
-      elevation={6}
-      className={question.type === "number" ? "reveal-number" : "reveal-fuzzy"}
-      sx={{ p: 3, width: "100%", textAlign: "left" }}
-    >
-      <Typography variant="h4" sx={{ color: "success.main", mb: 2 }}>
-        {answerText}
-      </Typography>
-      <Stack component="ul" gap={0.5} sx={{ listStyle: "none", m: 0, p: 0 }}>
-        {revealed.results.slice(0, MAX_VISIBLE_PLAYERS).map((result: AnswerResult) => (
-          <Stack
-            component="li"
-            key={result.playerId}
-            direction="row"
-            gap={1}
-            alignItems="center"
-            justifyContent="space-between"
-          >
-            <Typography noWrap sx={{ opacity: result.score > 0 ? 1 : 0.55 }}>
-              {`${nameFor(result.playerId)}: ${formatGuess(result.value)} — +${result.score}`}
-            </Typography>
-            {result.correct && <AppIcon name="check_circle" color="success" sx={{ fontSize: 20 }} />}
-          </Stack>
-        ))}
-      </Stack>
-    </Paper>
-  );
-}
-
-function formatAcceptedAnswers(correct: { acceptedAnswers: string[] }): string {
-  const label = correct.acceptedAnswers.length > 1 ? "Accepted answers" : "Accepted answer";
-  return `${label}: ${correct.acceptedAnswers.join(", ")}`;
-}
-
-function formatGuess(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "(no answer)";
-  return String(value);
+  return <RevealAnswerCard question={question} revealed={revealed} players={players} />;
 }

@@ -3,7 +3,7 @@
 // types; keep the two files in sync when the event protocol changes.
 export type AckResponse<T> = { ok: true; data: T } | { ok: false; error: string };
 
-export type QuestionType = "number" | "geo" | "fuzzy-text";
+export type QuestionType = "number" | "geo" | "fuzzy-text" | "multiple-choice";
 
 interface PublicQuestionBase {
   id: string;
@@ -16,7 +16,11 @@ interface PublicQuestionBase {
 export type PublicQuestion =
   | (PublicQuestionBase & { type: "number"; min: number; max: number; step: number })
   | (PublicQuestionBase & { type: "geo"; maxDistanceKm: number })
-  | (PublicQuestionBase & { type: "fuzzy-text" });
+  | (PublicQuestionBase & { type: "fuzzy-text" })
+  // The options are public, the correct index is not: it stays on the server
+  // until the reveal, so a phone with devtools open can't read the answer off
+  // the question payload.
+  | (PublicQuestionBase & { type: "multiple-choice"; options: string[] });
 
 export interface PublicPlayer {
   id: string;
@@ -96,6 +100,8 @@ export interface ClientToServerEvents {
   "question:next": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   "question:reveal": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   "session:end": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
+  /** "Play again": same question set, same players, same join code, scores back to zero. */
+  "session:restart": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   // No playerId: the server resolves the answering player from the socket
   // that joined, so a player can only ever answer as themselves.
   "answer:submit": (

@@ -13,6 +13,7 @@ import { AppIcon } from "../components/AppIcon.js";
 import { CountdownRing } from "../components/CountdownRing.js";
 import { FuzzyTextAnswerInput } from "../components/FuzzyTextAnswerInput.js";
 import { GeoMapInput, type GeoGuess } from "../components/GeoMapInput.js";
+import { MultipleChoiceAnswerInput } from "../components/MultipleChoiceAnswerInput.js";
 import { NumberAnswerInput } from "../components/NumberAnswerInput.js";
 import { QuestionPrompt } from "../components/QuestionPrompt.js";
 import { Screen } from "../components/Screen.js";
@@ -79,6 +80,15 @@ export function PlayView() {
     if (!code) return;
     const socket = getSocket();
 
+    // A "play again" restarts the same set, so question ids repeat. Without
+    // clearing the id the phone last rendered, showQuestion would treat the
+    // replayed question as the one already on screen and keep the previous
+    // game's slider position, pin and reveal.
+    const forgetCurrentQuestion = () => {
+      shownQuestionId.current = null;
+      setRevealed(null);
+    };
+
     const showQuestion = (payload: QuestionShowPayload, answered: boolean) => {
       const isNewQuestion = shownQuestionId.current !== payload.question.id;
       shownQuestionId.current = payload.question.id;
@@ -101,6 +111,7 @@ export function PlayView() {
         showQuestion(data.question, data.answered);
         return;
       }
+      if (data.state === "lobby") forgetCurrentQuestion();
       setPhase(data.state === "ended" ? "ended" : data.state === "reveal" ? "between" : "waiting");
     };
 
@@ -173,6 +184,7 @@ export function PlayView() {
         }
         return;
       }
+      if (payload.state === "lobby") forgetCurrentQuestion();
       setPhase((current) => {
         if (payload.state === "ended") return "ended";
         if (payload.state === "reveal") return current === "revealed" ? current : "between";
@@ -274,7 +286,8 @@ export function PlayView() {
         />
       );
     }
-    const canSubmit = question.question.type !== "fuzzy-text" || answerValue.trim().length > 0;
+    // The number slider always has a value; typing and tapping both start empty.
+    const canSubmit = question.question.type === "number" || answerValue.trim().length > 0;
     const doSubmit = () => canSubmit && submitAnswer(parseAnswer(question.question, answerValue));
     return (
       <Screen phaseKey={`answering-${question.question.id}`} gap={2} sx={{ justifyContent: "space-between" }}>
@@ -422,7 +435,10 @@ function defaultAnswerFor(question: PublicQuestion): string {
 }
 
 function parseAnswer(question: PublicQuestion, raw: string): unknown {
-  if (question.type === "number") return Number(raw);
+  // Multiple choice travels as the index of the chosen option, not its text:
+  // the server scores against correctIndex, and an index can't be mangled by
+  // an option that happens to contain punctuation.
+  if (question.type === "number" || question.type === "multiple-choice") return Number(raw);
   return raw;
 }
 
@@ -442,6 +458,15 @@ function AnswerInput({
       <NumberAnswerInput
         question={question}
         value={Number(value)}
+        onChange={(next) => onChange(String(next))}
+      />
+    );
+  }
+  if (question.type === "multiple-choice") {
+    return (
+      <MultipleChoiceAnswerInput
+        question={question}
+        value={value === "" ? null : Number(value)}
         onChange={(next) => onChange(String(next))}
       />
     );

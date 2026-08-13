@@ -16,7 +16,11 @@ single ephemeral event.
   answering / waiting-for-others / reveal); no scrolling, icon-forward,
   minimal text, dark Material-style theme.
 - **Admin / upload** (`/admin`) — where the host picks a question set
-  (JSON or ZIP) before starting the quiz.
+  (a JSON/ZIP file, or JSON pasted straight out of a chat window) before
+  starting the quiz.
+- **Format docs** (`/docs/question-format`) — the question set format, with
+  its field tables rendered from the published JSON Schema (see "Question
+  set authoring" below). The only screen in the app that scrolls.
 
 Both the host and mobile views are the *same* React SPA rendering different
 routes, not separate apps — they share the socket client, design tokens, and
@@ -30,6 +34,15 @@ realtime/reconnect logic and keep the deploy to a single service.
 | `number` | slider (MUI `Slider`, a native `<input type="range">` under the hood), bounds/step from the question | distance from `correctValue`, closer = more points, linear falloff to 0 at `scoreToleranceValue` |
 | `geo` | tap-to-place a pin on a [Leaflet](https://leafletjs.com/) map (OpenStreetMap tiles — free, no API key, matters for free-tier hosting) | Haversine distance to `correctLat/correctLng`; points fall off to 0 at `maxDistanceKm` |
 | `fuzzy-text` | free-text input | normalized similarity via [`fastest-levenshtein`](https://github.com/ott-jarv/fastest-levenshtein) against `acceptedAnswers`, correct if similarity ≥ per-question `threshold` |
+| `multiple-choice` | tap one of 2–6 `options` (MUI `ToggleButtonGroup`), then submit | all-or-nothing against `correctIndex` |
+
+`multiple-choice` is deliberately **not** partial-credit: there is no
+meaningful "close" on a list of four, and a falloff would pay out for
+guessing. It is pick-then-submit rather than submit-on-tap, because the
+first submission for a player is final — a stray thumb while the phone is
+being raised would otherwise be the answer. The answer travels as the
+*index* of the chosen option, and `correctIndex` never leaves the server
+before the reveal (only `options` is in the public question payload).
 
 **Score falloff is per-question and independent of the input widget.** Both
 partial-credit types take a tolerance field — `maxDistanceKm` for `geo`,
@@ -55,15 +68,50 @@ phones can't drift apart even under bad wifi.
 ## Question set delivery (decided)
 
 A question set is either:
-- a single `.json` file (images referenced by URL only), or
+- a single `.json` file (images referenced by URL only),
 - a `.zip` containing the JSON plus local image files, referenced from the
-  JSON by relative path.
+  JSON by relative path, or
+- **JSON pasted into the admin screen**, which skips the upload endpoint
+  entirely and goes straight to `PUT /sessions/:id/question-set` (the same
+  validator). This exists because the realistic way to get a question set is
+  now "ask an LLM", and its answer is text in a chat window — saving it to a
+  file first was pure friction.
 
 `adm-zip` is used to read the archive server-side. **Zip-slip protection is
 mandatory**: every entry's resolved path must be verified to stay inside the
 extraction directory before writing (reject `..` segments, absolute paths,
 and symlink entries) — implemented as part of the import pipeline issue, not
 yet in this scaffold.
+
+## Question set authoring (decided)
+
+The format is **published as a JSON Schema at `GET /api/question-set-schema`,
+generated from the zod schema** (`zod-to-json-schema` over the `.describe()`
+annotations in `questionSetSchema.ts`) rather than written by hand. The whole
+point of the document is that JSON built to it imports without an error,
+which it can only guarantee if it *is* the validator; a hand-maintained copy
+would be one forgotten edit away from lying. The `/docs/question-format` page
+and the field lists in the LLM prompts are rendered from that same fetched
+document, so there is exactly one description of each field in the codebase.
+
+Around it:
+- **Copy buttons** for the raw schema (host lobby + docs) and for a
+  ready-to-send prompt that wraps it in "reply with the JSON only".
+- **A Gemini deep link** (`https://gemini.google.com/app?q=…`). A URL can't
+  carry the full ~8kB schema, and pointing Gemini at the schema *URL* fails
+  too — this app is usually reached at a LAN address Google can't fetch — so
+  the link carries a ~1.3kB compact field list derived from the schema plus
+  the bundled example (~2.4kB encoded). The `?q=` prefill is undocumented
+  behaviour, so every place the link appears also offers the prompt on the
+  clipboard.
+- Clipboard writes fall back to `execCommand("copy")`, because
+  `navigator.clipboard` is unavailable on the plain-HTTP origins this gets
+  deployed on.
+
+Cross-field rules that zod can't express per-field (currently: `correctIndex`
+must index into `options`) live in a `superRefine` on the question union, and
+the validation endpoint returns a readable `message` — the paste flow's error
+line is the only feedback an author gets.
 
 ## Storage: no SQL, mostly in-memory (decided)
 
@@ -95,6 +143,14 @@ wifi, and for consistent behavior across Safari and Chrome (Safari's
 WebSocket behavior over some proxies/networks is a common source of pain,
 long-polling fallback sidesteps that). The full join/start/answer/reveal
 event protocol is defined by the realtime-engine issue, not this scaffold.
+
+**Playing again reuses the session.** `session:restart` (host-only) puts a
+finished quiz back in the lobby with scores zeroed, keeping the players, the
+question set and — critically — the join code, so nobody in the room re-scans
+anything between games. The cost is that both clients must forget their
+per-question state when a sync says `lobby`: the same set replays the same
+question ids, so a phone that still remembers "I already rendered q1" would
+sit out round two on last game's result screen.
 
 **Reconnecting is a handshake, not just a transport concern.** Socket.IO
 restores the *connection* on its own, but the reconnected socket has a new
@@ -218,6 +274,7 @@ server/
     app.ts             # express app factory (also serves client/dist)
     realtime.ts        # socket.io bootstrap (transport only, see below)
     sessionStore.ts     # in-memory Map<sessionId, QuizSession>
+    questionSetJsonSchema.ts # zod schema -> published JSON Schema + example
     types.ts            # shared domain types (Question, QuizSession, ...)
     routes/api.ts        # REST endpoints
   data/                 # extracted question-set uploads (gitignored)
@@ -225,9 +282,10 @@ client/
   src/
     main.tsx            # router: /, /host/:sessionId, /play/:code, /admin
     theme.ts             # the one MUI dark theme (palette, type scale, defaults)
-    views/               # one component per route
-    components/           # Screen shell, answer inputs, leaderboard, icons
+    views/               # one component per route (incl. DocsView = /docs/question-format)
+    components/           # Screen shell, answer inputs, leaderboard, reveal card, icons
     lib/socket.ts         # shared Socket.IO client + rejoin-on-reconnect helper
+    lib/questionSetFormat.ts # fetches the published schema; builds the LLM prompts
     lib/celebrate.ts       # lazily-imported confetti, no-op if reduced motion
     styles.css            # only what MUI can't own: icon font axes + Leaflet
 Dockerfile              # multi-stage build -> small node:20-alpine runtime image
@@ -267,3 +325,9 @@ All gameplay, the question-set import pipeline, and CI/CD are implemented:
    collapsible image toggle on mobile, confetti on a correct answer,
    per-question `scoreToleranceValue`, and rejoin-on-reconnect so a locked
    phone rejoins its session by itself.
+7. Authoring + replay — the `multiple-choice` question type, "new game,
+   same questions" on the host's final screen, the published JSON Schema
+   with `/docs/question-format` and copy/Gemini buttons, pasting JSON on
+   `/admin`, a clickable join link, and the reveal rebuilt as a Material
+   answer card (name / guess / points in their own slots) instead of a
+   dash-separated string.

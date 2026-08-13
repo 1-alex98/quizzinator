@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { haversineKm, scoreAnswer } from "../scoring.js";
-import type { FuzzyTextQuestion, GeoQuestion, NumberQuestion } from "../types.js";
+import type {
+  FuzzyTextQuestion,
+  GeoQuestion,
+  MultipleChoiceQuestion,
+  NumberQuestion,
+} from "../types.js";
 
 const numberQuestion: NumberQuestion = {
   id: "q-number",
@@ -143,5 +148,38 @@ describe("scoreAnswer for fuzzy-text questions", () => {
     const result = scoreAnswer(fuzzyQuestion, "Marie Curei");
     expect(result.correct).toBe(true);
     expect(result.score).toBe(100);
+  });
+});
+
+describe("scoreAnswer for multiple-choice questions", () => {
+  const choiceQuestion: MultipleChoiceQuestion = {
+    id: "q-choice",
+    type: "multiple-choice",
+    prompt: "Which came first?",
+    points: 100,
+    options: ["The Walkman", "The CD player", "The iPod"],
+    correctIndex: 0,
+  };
+
+  it("awards full points for the correct option index", () => {
+    expect(scoreAnswer(choiceQuestion, 0)).toEqual({ score: 100, correct: true });
+  });
+
+  // All-or-nothing on purpose: "one option away" means nothing on a short list,
+  // and partial credit there would pay out for guessing.
+  it("awards nothing for any other option, however close", () => {
+    expect(scoreAnswer(choiceQuestion, 1)).toEqual({ score: 0, correct: false });
+    expect(scoreAnswer(choiceQuestion, 2)).toEqual({ score: 0, correct: false });
+  });
+
+  it("awards nothing for an index that isn't an option at all", () => {
+    expect(scoreAnswer(choiceQuestion, 9)).toEqual({ score: 0, correct: false });
+    expect(scoreAnswer(choiceQuestion, -1)).toEqual({ score: 0, correct: false });
+  });
+
+  it("awards nothing for a non-integer answer", () => {
+    expect(scoreAnswer(choiceQuestion, "The Walkman")).toEqual({ score: 0, correct: false });
+    expect(scoreAnswer(choiceQuestion, null)).toEqual({ score: 0, correct: false });
+    expect(scoreAnswer(choiceQuestion, 0.5)).toEqual({ score: 0, correct: false });
   });
 });

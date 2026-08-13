@@ -3,6 +3,7 @@ import multer, { MulterError } from "multer";
 import { nanoid } from "nanoid";
 import { createSession, getSession, getSessionByCode, setQuestionSet } from "../sessionStore.js";
 import { questionSetSchema } from "../questionSetSchema.js";
+import { questionSetJsonSchema } from "../questionSetJsonSchema.js";
 import {
   importZipQuestionSet,
   MAX_UPLOAD_BYTES,
@@ -16,6 +17,15 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX
 
 apiRouter.get("/health", (_req, res) => {
   res.json({ status: "ok" });
+});
+
+// The question set format as a JSON Schema, generated from the same zod
+// schema every upload is validated against. Public and cacheable: it is meant
+// to be copied out of the host screen and pasted into an LLM, or read on the
+// /docs/question-format page, so a quiz author never has to guess at fields.
+apiRouter.get("/question-set-schema", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=3600");
+  res.json(questionSetJsonSchema());
 });
 
 // Creates a new lobby and returns its host id + share code. hostToken is a
@@ -95,7 +105,16 @@ apiRouter.put("/sessions/:id/question-set", (req, res) => {
   }
   const parsed = questionSetSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "invalid_question_set", details: parsed.error.flatten() });
+    // `message` mirrors the phrasing POST /question-sets uses for uploads, so
+    // the admin screen can surface one readable line whichever way the set
+    // arrived - pasted JSON lands here without passing through the importer.
+    res.status(400).json({
+      error: "invalid_question_set",
+      message: `Question set failed validation: ${parsed.error.issues
+        .map((i) => `${i.path.join(".")}: ${i.message}`)
+        .join("; ")}`,
+      details: parsed.error.flatten(),
+    });
     return;
   }
   setQuestionSet(session, parsed.data);
