@@ -78,6 +78,8 @@ export interface Player {
   socketId: string | null;
   connected: boolean;
   score: number;
+  /** When this player's socket dropped, or null while they are connected. */
+  disconnectedAt: number | null;
   /** Set while a disconnected player's grace period is running; cleared on reconnect. */
   graceTimeout: NodeJS.Timeout | null;
 }

@@ -478,6 +478,35 @@ describe("HostView", () => {
     expect(screen.queryByText("Final leaderboard")).toBeNull();
   });
 
+  // The whole SPA shares one socket, so a quiz this laptop hosted earlier can
+  // still push syncs at it. Repainting on those is what flashed a stale final
+  // leaderboard - every player in it offline - over a live question.
+  it("ignores a state sync belonging to a different session", () => {
+    joinsAs({ players: [], totalQuestions: 1 });
+    const handlers = captureSocketHandlers();
+    renderAt("s1");
+
+    handlers.fire("question:show", {
+      question: { id: "q1", type: "fuzzy-text", prompt: "Who?", points: 100 },
+      index: 0,
+      total: 1,
+      endsAt: Date.now() + 30_000,
+      timeLimitSec: 30,
+    });
+
+    handlers.fire("state:sync", {
+      sessionId: "an-older-session",
+      code: "ZZZZZ",
+      state: "ended",
+      currentQuestionIndex: 0,
+      totalQuestions: 1,
+      players: [{ id: "old", name: "Gone", connected: false, score: 10 }],
+    });
+
+    expect(screen.queryByText("Final leaderboard")).toBeNull();
+    expect(screen.getByText("Who?")).toBeTruthy();
+  });
+
   it("renders the join link as a clickable anchor", () => {
     joinsAs({ players: [], totalQuestions: 0 });
     renderAt("s1");

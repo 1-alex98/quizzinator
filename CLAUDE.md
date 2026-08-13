@@ -164,6 +164,32 @@ WebSocket behavior over some proxies/networks is a common source of pain,
 long-polling fallback sidesteps that). The full join/start/answer/reveal
 event protocol is defined by the realtime-engine issue, not this scaffold.
 
+**One socket per browser, so session membership has to be cleaned up.** The
+whole SPA shares a single Socket.IO connection, and a socket that joins a
+session stays in that session's room until told otherwise — so hosting a
+second quiz ("New quiz" off the final screen) or scanning a new join code
+would leave the socket subscribed to the *previous* session's broadcasts.
+That is how a TV mid-question could suddenly flash the last quiz's final
+leaderboard (every player in it long since offline) for a few seconds until
+the next real sync put it back. Both halves are fixed: `host:join`/
+`player:join` leave every other session room (and retire the player the
+socket abandoned, rather than leaving a ghost sitting "connected" in the old
+session forever), and both clients ignore a `state:sync` whose `sessionId`
+isn't the one they're in.
+
+**Nothing about the game is decided the instant a socket goes quiet.** Venue
+wifi, a locked iPhone and a backgrounded tab all drop sockets constantly, and
+each one is a player still standing in the room. So a disconnected player
+keeps their place in the "everyone has answered" count for a 20s presence
+grace (`graceTimings.presenceMs`) — otherwise one locked screen makes the
+reveal fire the moment everyone *else* has answered, cutting the question
+short for the room — and keeps their identity and score for 30 minutes
+(`graceTimings.reconnectMs`), long enough to outlast a flat battery reaching
+a charger. The leaderboard still shows them as offline immediately; only the
+answer count pretends they're there. When the presence grace lapses the
+quorum is re-checked, so a player who really is gone doesn't make everyone
+wait out the full timer either.
+
 **Playing again reuses the session.** `session:restart` (host-only) puts a
 finished quiz back in the lobby with scores zeroed, keeping the players, the
 question set and — critically — the join code, so nobody in the room re-scans
