@@ -16,11 +16,26 @@ describe("GET /api/health", () => {
 });
 
 describe("POST /api/sessions", () => {
-  it("creates a session with a 5-character join code", async () => {
+  it("creates a session with a 5-character join code and a host secret", async () => {
     const app = createApp();
     const res = await request(app).post("/api/sessions");
     expect(res.status).toBe(201);
     expect(res.body.code).toMatch(/^[A-Z0-9]{5}$/);
+    expect(typeof res.body.id).toBe("string");
+    // hostToken is a secret required by the host:join socket event - never
+    // derivable from the join code alone (see GET /sessions/by-code below).
+    expect(typeof res.body.hostToken).toBe("string");
+    expect(res.body.hostToken.length).toBeGreaterThanOrEqual(20);
+  });
+});
+
+describe("GET /api/sessions/by-code/:code", () => {
+  it("does not leak the internal sessionId or hostToken to unauthenticated callers", async () => {
+    const app = createApp();
+    const created = await request(app).post("/api/sessions");
+    const res = await request(app).get(`/api/sessions/by-code/${created.body.code}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ code: created.body.code, state: "lobby" });
   });
 });
 

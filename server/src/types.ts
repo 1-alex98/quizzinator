@@ -79,6 +79,14 @@ export interface QuizSession {
   id: string;
   /** Short human-friendly code the host shares with mobile participants. */
   code: string;
+  /**
+   * Secret returned only in the POST /api/sessions response, to the caller
+   * that created the session. host:join requires it, so knowing/guessing
+   * the sessionId (or the join code, which - unlike this token - is
+   * deliberately short/typeable and shown on screen) isn't enough to take
+   * over hosting a session that isn't yours.
+   */
+  hostToken: string;
   hostSocketId: string | null;
   state: SessionState;
   currentQuestionIndex: number;

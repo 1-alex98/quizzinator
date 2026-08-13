@@ -50,9 +50,25 @@ describe("HostView", () => {
     socketMock.emit.mockReset();
     socketMock.on.mockReset();
     socketMock.off.mockReset();
+    sessionStorage.clear();
   });
 
   afterEach(cleanup);
+
+  it("sends the sessionStorage-persisted host token with host:join", () => {
+    sessionStorage.setItem("quizzinator:host-token:s1", "secret-1");
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "host:join") ack({ ok: false, error: "not_host" });
+    });
+
+    renderAt("s1");
+
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "host:join",
+      { sessionId: "s1", hostToken: "secret-1" },
+      expect.any(Function),
+    );
+  });
 
   it("renders the lobby once host:join acknowledges", () => {
     socketMock.emit.mockImplementation((event, _payload, ack) => {

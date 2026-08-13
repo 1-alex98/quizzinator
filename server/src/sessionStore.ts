@@ -16,6 +16,7 @@ export function createSession(id: string): QuizSession {
   const session: QuizSession = {
     id,
     code,
+    hostToken: nanoid(24),
     hostSocketId: null,
     state: "lobby",
     currentQuestionIndex: -1,

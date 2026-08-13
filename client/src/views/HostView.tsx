@@ -39,8 +39,9 @@ export function HostView() {
   useEffect(() => {
     if (!sessionId) return;
     const socket = getSocket();
+    const hostToken = sessionStorage.getItem(`quizzinator:host-token:${sessionId}`) ?? "";
 
-    socket.emit("host:join", { sessionId }, (res) => {
+    socket.emit("host:join", { sessionId, hostToken }, (res) => {
       if (!res.ok) {
         setError(res.error);
         return;

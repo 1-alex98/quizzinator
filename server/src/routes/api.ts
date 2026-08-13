@@ -18,10 +18,13 @@ apiRouter.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-// Creates a new lobby and returns its host id + share code.
+// Creates a new lobby and returns its host id + share code. hostToken is a
+// secret only returned here, to the creator - it's required by the
+// host:join socket event, so knowing the sessionId or join code alone
+// isn't enough to take over hosting someone else's session.
 apiRouter.post("/sessions", (_req, res) => {
   const session = createSession(nanoid(10));
-  res.status(201).json({ id: session.id, code: session.code });
+  res.status(201).json({ id: session.id, code: session.code, hostToken: session.hostToken });
 });
 
 // Validates (and for ZIPs, safely extracts) an uploaded question set, and
@@ -67,13 +70,18 @@ apiRouter.post("/question-sets", (req, res) => {
   });
 });
 
+// Deliberately doesn't return the internal sessionId or hostToken - this
+// endpoint is unauthenticated (anyone with a join code can call it), and
+// the sessionId is what host:join needs, so leaking it here would let
+// knowledge of the (short, guessable-by-brute-force) join code escalate
+// into hosting control.
 apiRouter.get("/sessions/by-code/:code", (req, res) => {
   const session = getSessionByCode(req.params.code);
   if (!session) {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  res.json({ id: session.id, code: session.code, state: session.state });
+  res.json({ code: session.code, state: session.state });
 });
 
 // Attaches a question set to a lobby directly as JSON - used both by the
