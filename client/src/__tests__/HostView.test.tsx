@@ -7,10 +7,18 @@ const socketMock = {
   emit: vi.fn(),
   on: vi.fn(),
   off: vi.fn(),
+  connected: true,
 };
 
 vi.mock("../lib/socket.js", () => ({
   getSocket: () => socketMock,
+  // Mirrors the real helper: run the join handshake right away on an
+  // already-connected socket, and again on every later reconnect.
+  onReconnect: (socket: typeof socketMock, rejoin: () => void) => {
+    socket.on("connect", rejoin);
+    if (socket.connected) rejoin();
+    return () => socket.off("connect", rejoin);
+  },
 }));
 
 // react-leaflet needs real layout/DOM measurement jsdom doesn't provide;
@@ -89,10 +97,43 @@ describe("HostView", () => {
 
     renderAt("s1");
 
-    expect(screen.getByText("Code: ABCDE")).toBeTruthy();
+    expect(screen.getByText("ABCDE")).toBeTruthy();
     expect(screen.getByText("1 player joined")).toBeTruthy();
     expect(screen.getByText("Start quiz")).toBeTruthy();
     expect(document.querySelector(".join-qr svg")).toBeTruthy();
+  });
+
+  // Regression test for the reconnect bug: a reconnected socket is a new
+  // socket id the server doesn't yet know is the host, so the handshake has
+  // to be repeated or the TV silently stops receiving events.
+  it("re-runs host:join when the socket reconnects", () => {
+    sessionStorage.setItem("quizzinator:host-token:s1", "secret-1");
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "host:join") {
+        ack({
+          ok: true,
+          data: {
+            sessionId: "s1",
+            code: "ABCDE",
+            state: "lobby",
+            currentQuestionIndex: -1,
+            totalQuestions: 0,
+            players: [],
+          },
+        });
+      }
+    });
+    const handlers = captureSocketHandlers();
+    renderAt("s1");
+
+    const joinsAfterMount = socketMock.emit.mock.calls.filter(([event]) => event === "host:join").length;
+    expect(joinsAfterMount).toBe(1);
+
+    handlers.fire("connect", undefined);
+
+    const joinsAfterReconnect = socketMock.emit.mock.calls.filter(([event]) => event === "host:join");
+    expect(joinsAfterReconnect).toHaveLength(2);
+    expect(joinsAfterReconnect[1][1]).toEqual({ sessionId: "s1", hostToken: "secret-1" });
   });
 
   it("shows an error when the session can't be found", () => {
@@ -255,7 +296,10 @@ describe("HostView", () => {
       leaderboard: [{ id: "p1", name: "Alice", connected: true, score: 80 }],
     });
 
-    expect(screen.getByText("Alice — 80")).toBeTruthy();
+    // Name, running total and the delta gained this round are separate
+    // elements in the redesigned leaderboard so they can be styled apart.
+    expect(screen.getByText("Alice")).toBeTruthy();
+    expect(screen.getByText("80")).toBeTruthy();
     expect(screen.getByText("+80")).toBeTruthy();
   });
 

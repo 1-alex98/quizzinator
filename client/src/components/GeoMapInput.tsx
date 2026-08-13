@@ -4,7 +4,13 @@ import { MapContainer, Marker, TileLayer, useMapEvents } from "react-leaflet";
 import markerIconUrl from "leaflet/dist/images/marker-icon.png";
 import markerIcon2xUrl from "leaflet/dist/images/marker-icon-2x.png";
 import markerShadowUrl from "leaflet/dist/images/marker-shadow.png";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
+import Paper from "@mui/material/Paper";
+import Stack from "@mui/material/Stack";
 import type { PublicQuestion } from "../lib/protocol.js";
+import { AppIcon } from "./AppIcon.js";
 import { QuestionPrompt } from "./QuestionPrompt.js";
 
 type GeoQuestion = Extract<PublicQuestion, { type: "geo" }>;
@@ -20,6 +26,10 @@ const pinIcon = L.icon({
   iconSize: [25, 41],
   iconAnchor: [12, 41],
 });
+
+// Leaflet's own panes sit at z-index 400-700, so every control floating over
+// the map has to clear that.
+const OVER_MAP = 1000;
 
 function ClickCapture({ onPick }: { onPick: (guess: GeoGuess) => void }) {
   useMapEvents({
@@ -46,23 +56,15 @@ export function GeoMapInput({
   const [promptOpen, setPromptOpen] = useState(false);
 
   return (
-    <div className="geo-screen">
-      <div className="geo-screen__header">
-        <span className="card geo-screen__timer">{remainingSec}s</span>
-        <button
-          type="button"
-          className="btn geo-screen__prompt-toggle"
-          onClick={() => setPromptOpen((open) => !open)}
-        >
-          <span className="material-symbols-rounded">{promptOpen ? "expand_less" : "help"}</span>
-          {promptOpen ? "Hide question" : "Show question"}
-        </button>
-      </div>
-      {promptOpen && (
-        <div className="geo-screen__prompt card">
-          <QuestionPrompt question={question} />
-        </div>
-      )}
+    <Box
+      sx={{
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        width: "100%",
+      }}
+    >
       <MapContainer
         className="geo-screen__map"
         center={[20, 0]}
@@ -74,10 +76,64 @@ export function GeoMapInput({
         <ClickCapture onPick={onPick} />
         {pin && <Marker position={[pin.lat, pin.lng]} icon={pinIcon} />}
       </MapContainer>
-      <button type="button" className="btn geo-screen__submit" onClick={onSubmit} disabled={!pin}>
-        <span className="material-symbols-rounded">check</span>
+
+      <Stack
+        direction="row"
+        alignItems="center"
+        gap={1}
+        sx={{ position: "absolute", top: 12, left: 12, right: 12, zIndex: OVER_MAP }}
+      >
+        {remainingSec !== null && (
+          <Chip
+            color="secondary"
+            icon={<AppIcon name="timer" fontSize="small" />}
+            label={`${remainingSec}s`}
+          />
+        )}
+        <Button
+          size="small"
+          onClick={() => setPromptOpen((open) => !open)}
+          startIcon={<AppIcon name={promptOpen ? "expand_less" : "help"} fontSize="small" />}
+          sx={{ ml: "auto", minHeight: 40, py: 0.5, fontSize: "0.9rem" }}
+        >
+          {promptOpen ? "Hide question" : "Show question"}
+        </Button>
+      </Stack>
+
+      {promptOpen && (
+        <Paper
+          elevation={12}
+          sx={{
+            position: "absolute",
+            top: 64,
+            left: 12,
+            right: 12,
+            zIndex: OVER_MAP,
+            p: 2,
+            maxHeight: "50vh",
+            overflow: "auto",
+            textAlign: "center",
+          }}
+        >
+          <QuestionPrompt question={question} />
+        </Paper>
+      )}
+
+      <Button
+        color="secondary"
+        onClick={onSubmit}
+        disabled={!pin}
+        startIcon={<AppIcon name="check" />}
+        sx={{
+          position: "absolute",
+          bottom: 20,
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: OVER_MAP,
+        }}
+      >
         Confirm pin
-      </button>
-    </div>
+      </Button>
+    </Box>
   );
 }

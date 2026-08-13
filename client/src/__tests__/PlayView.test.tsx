@@ -7,10 +7,18 @@ const socketMock = {
   emit: vi.fn(),
   on: vi.fn(),
   off: vi.fn(),
+  connected: true,
 };
 
 vi.mock("../lib/socket.js", () => ({
   getSocket: () => socketMock,
+  // Mirrors the real helper: run the join handshake right away on an
+  // already-connected socket, and again on every later reconnect.
+  onReconnect: (socket: typeof socketMock, rejoin: () => void) => {
+    socket.on("connect", rejoin);
+    if (socket.connected) rejoin();
+    return () => socket.off("connect", rejoin);
+  },
 }));
 
 // react-leaflet needs real layout/DOM measurement that jsdom doesn't provide;
@@ -56,7 +64,7 @@ function captureSocketHandlers() {
 function joinAndReachAnswering(code: string, question: unknown) {
   socketMock.emit.mockImplementation((event, _payload, ack) => {
     if (event === "player:join") {
-      ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby" } });
+      ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby", answered: false } });
     }
   });
   const handlers = captureSocketHandlers();
@@ -120,7 +128,7 @@ describe("PlayView", () => {
   it("moves to the waiting screen once the join ack resolves", () => {
     socketMock.emit.mockImplementation((event, _payload, ack) => {
       if (event === "player:join") {
-        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby" } });
+        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby", answered: false } });
       }
     });
 
@@ -244,7 +252,7 @@ describe("PlayView", () => {
   it("shows the player's rank after a question reveal", () => {
     socketMock.emit.mockImplementation((event, _payload, ack) => {
       if (event === "player:join") {
-        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby" } });
+        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby", answered: false } });
       }
     });
     const handlers = captureSocketHandlers();
@@ -268,10 +276,81 @@ describe("PlayView", () => {
     expect(screen.getByText("Rank #2 of 2")).toBeTruthy();
   });
 
+  // Regression test for the iOS screen-lock bug: the reconnected socket is a
+  // new socket id the server no longer maps to this player, so the phone has
+  // to repeat the handshake by itself - and the ack has to put it back on the
+  // question it was answering.
+  it("re-joins with the persisted identity on reconnect and restores the in-flight question", () => {
+    localStorage.setItem("quizzinator:player:ABCDE", "p1");
+    localStorage.setItem("quizzinator:player-name:ABCDE", "Alice");
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "player:join") {
+        ack({
+          ok: true,
+          data: {
+            playerId: "p1",
+            sessionId: "s1",
+            state: "question",
+            answered: false,
+            question: {
+              question: { id: "q1", type: "fuzzy-text", prompt: "Who painted it?", points: 100 },
+              index: 0,
+              total: 1,
+              endsAt: Date.now() + 20_000,
+              timeLimitSec: 30,
+            },
+          },
+        });
+      }
+    });
+
+    renderAt("ABCDE");
+
+    // Rejoined without showing the join form again...
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "player:join",
+      { code: "ABCDE", name: "Alice", playerId: "p1" },
+      expect.any(Function),
+    );
+    // ...and landed back on the question rather than a blank screen.
+    expect(screen.getByText("Who painted it?")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Type your answer…")).toBeTruthy();
+  });
+
+  it("shows the waiting-for-others screen when rejoining a question it already answered", () => {
+    localStorage.setItem("quizzinator:player:ABCDE", "p1");
+    localStorage.setItem("quizzinator:player-name:ABCDE", "Alice");
+    socketMock.emit.mockImplementation((event, _payload, ack) => {
+      if (event === "player:join") {
+        ack({
+          ok: true,
+          data: {
+            playerId: "p1",
+            sessionId: "s1",
+            state: "question",
+            answered: true,
+            question: {
+              question: { id: "q1", type: "fuzzy-text", prompt: "Who painted it?", points: 100 },
+              index: 0,
+              total: 1,
+              endsAt: Date.now() + 20_000,
+              timeLimitSec: 30,
+            },
+          },
+        });
+      }
+    });
+
+    renderAt("ABCDE");
+
+    expect(screen.getByText("Answer submitted, waiting for other players…")).toBeTruthy();
+    expect(screen.queryByPlaceholderText("Type your answer…")).toBeNull();
+  });
+
   it("shows the player's final rank on the ended screen", () => {
     socketMock.emit.mockImplementation((event, _payload, ack) => {
       if (event === "player:join") {
-        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby" } });
+        ack({ ok: true, data: { playerId: "p1", sessionId: "s1", state: "lobby", answered: false } });
       }
     });
     const handlers = captureSocketHandlers();

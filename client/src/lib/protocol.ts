@@ -75,6 +75,10 @@ export interface PlayerJoinAck {
   playerId: string;
   sessionId: string;
   state: SessionState;
+  /** The in-flight question, when state is "question", so a rejoining phone lands back on the answer screen. */
+  question?: QuestionShowPayload;
+  /** Whether this player already answered the in-flight question. */
+  answered: boolean;
 }
 
 export interface ClientToServerEvents {

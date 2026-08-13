@@ -17,6 +17,9 @@ export const TEST_QUESTION_SET = {
       max: 2026,
       step: 1,
       correctValue: 1989,
+      // The slider spans a century so the answer isn't obvious from where the
+      // handle starts, but only guesses within two decades should score.
+      scoreToleranceValue: 20,
     },
     {
       id: "q-geo",

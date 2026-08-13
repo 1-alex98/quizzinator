@@ -23,6 +23,13 @@ export interface NumberQuestion extends QuestionBase {
   max: number;
   step: number;
   correctValue: number;
+  /**
+   * How far off a guess may be before it scores nothing - the number
+   * equivalent of geo's `maxDistanceKm`, and independent of the slider's
+   * own min/max so a 0-100 slider can still demand an answer within +-1.
+   * Defaults to the full slider range (`max - min`) when omitted.
+   */
+  scoreToleranceValue?: number;
 }
 
 export interface GeoQuestion extends QuestionBase {
