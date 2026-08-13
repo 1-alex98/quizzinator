@@ -93,6 +93,7 @@ export function upsertPlayer(
     socketId: null,
     connected: false,
     score: 0,
+    disconnectedAt: null,
     graceTimeout: null,
   };
   session.players.set(player.id, player);

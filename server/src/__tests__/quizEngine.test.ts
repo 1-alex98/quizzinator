@@ -5,6 +5,7 @@ import request from "supertest";
 import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import { createApp } from "../app.js";
 import { createRealtimeServer } from "../realtime.js";
+import { graceTimings } from "../quizEngine.js";
 import type {
   AckResponse,
   ClientToServerEvents,
@@ -23,6 +24,14 @@ function waitForEvent<E extends keyof ServerToClientEvents>(
   return new Promise((resolve) => {
     socket.once(event, resolve as never);
   });
+}
+
+/** "resolved" if the promise settles within `ms`, "pending" otherwise - for asserting an event has *not* fired yet. */
+function settled(promise: Promise<unknown>, ms: number): Promise<"resolved" | "pending"> {
+  return Promise.race([
+    promise.then(() => "resolved" as const),
+    new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), ms)),
+  ]);
 }
 
 function emitAck<E extends keyof ClientToServerEvents>(
@@ -492,37 +501,114 @@ describe("quiz engine", () => {
     bob.disconnect();
   });
 
-  it("auto-reveals based on connected players only, ignoring a disconnected player", async () => {
-    const { sessionId, code, hostToken } = await createLobby(numberQuestions);
+  // A phone that just dropped is a player still standing in the room, so it
+  // keeps its place in the answer count for a grace period: without that, one
+  // locked screen makes the reveal fire the moment everyone *else* answered.
+  it("keeps a just-dropped player in the answer count until the presence grace lapses", async () => {
+    const previousPresenceMs = graceTimings.presenceMs;
+    graceTimings.presenceMs = 400;
+    try {
+      const { sessionId, code, hostToken } = await createLobby(numberQuestions);
+
+      const host = connect();
+      await waitForEvent(host, "connect" as never);
+      await emitAck(host, "host:join", { sessionId, hostToken });
+
+      const alice = connect();
+      await waitForEvent(alice, "connect" as never);
+      await emitAck(alice, "player:join", { code, name: "Alice" });
+
+      const bob = connect();
+      await waitForEvent(bob, "connect" as never);
+      await emitAck(bob, "player:join", { code, name: "Bob" });
+
+      const questionShown = waitForEvent(alice, "question:show");
+      await emitAck(host, "session:start", { sessionId });
+      await questionShown;
+
+      const disconnectSync = waitForEvent(host, "state:sync");
+      bob.disconnect();
+      // The leaderboard is honest about it immediately - only the answer
+      // count keeps holding his place.
+      expect((await disconnectSync).players.find((p) => p.name === "Bob")).toMatchObject({
+        connected: false,
+      });
+
+      const revealed = waitForEvent(host, "question:revealed");
+      const progress = waitForEvent(host, "question:progress");
+      await emitAck(alice, "answer:submit", { sessionId, value: 50 });
+      expect(await progress).toEqual({ answered: 1, total: 2 });
+      expect(await settled(revealed, 150)).toBe("pending");
+
+      // Once the grace lapses, Bob is no longer expected to answer and the
+      // reveal happens by itself rather than waiting out the full timer.
+      await revealed;
+
+      host.disconnect();
+      alice.disconnect();
+    } finally {
+      graceTimings.presenceMs = previousPresenceMs;
+    }
+  }, 10000);
+
+  // Every view in the SPA shares one socket, so hosting a second quiz reuses
+  // the socket that is still in the first quiz's room. Left there, the old
+  // session's broadcasts (a player of that quiz finally timing out, say)
+  // would repaint the TV mid-question with the previous game's final screen.
+  it("stops delivering a session's broadcasts to a socket that has moved to another session", async () => {
+    const first = await createLobby(numberQuestions);
+    const second = await createLobby(numberQuestions);
 
     const host = connect();
     await waitForEvent(host, "connect" as never);
-    await emitAck(host, "host:join", { sessionId, hostToken });
+    await emitAck(host, "host:join", { sessionId: first.sessionId, hostToken: first.hostToken });
+    await emitAck(host, "host:join", { sessionId: second.sessionId, hostToken: second.hostToken });
 
-    const alice = connect();
-    await waitForEvent(alice, "connect" as never);
-    await emitAck(alice, "player:join", { code, name: "Alice" });
+    // A join is the cheapest way to make a session broadcast. The first
+    // quiz's is fired (and awaited) before the second's, so a socket still
+    // listening to it would report the *first* sessionId here.
+    const leftover = connect();
+    await waitForEvent(leftover, "connect" as never);
+    const sync = waitForEvent(host, "state:sync");
+    await emitAck(leftover, "player:join", { code: first.code, name: "Ghost" });
 
-    const bob = connect();
-    await waitForEvent(bob, "connect" as never);
-    await emitAck(bob, "player:join", { code, name: "Bob" });
+    const player = connect();
+    await waitForEvent(player, "connect" as never);
+    await emitAck(player, "player:join", { code: second.code, name: "Alice" });
 
-    const questionShown = waitForEvent(alice, "question:show");
-    await emitAck(host, "session:start", { sessionId });
-    await questionShown;
-
-    const disconnectSync = waitForEvent(host, "state:sync");
-    bob.disconnect();
-    await disconnectSync;
-
-    // Bob left, so Alice is now the only connected player - her answer alone
-    // should be enough to trigger the reveal, without waiting for Bob.
-    const revealed = waitForEvent(host, "question:revealed");
-    await emitAck(alice, "answer:submit", { sessionId, value: 50 });
-    await revealed;
+    expect(await sync).toMatchObject({ sessionId: second.sessionId, players: [{ name: "Alice" }] });
 
     host.disconnect();
-    alice.disconnect();
+    leftover.disconnect();
+    player.disconnect();
+  });
+
+  // The same shared socket, seen from a phone: scanning a new quiz's code
+  // must not leave a ghost of this phone sitting "connected" in the old one.
+  it("marks a player offline in the session their socket left behind", async () => {
+    const first = await createLobby(numberQuestions);
+    const second = await createLobby(numberQuestions);
+
+    const host = connect();
+    await waitForEvent(host, "connect" as never);
+    await emitAck(host, "host:join", { sessionId: first.sessionId, hostToken: first.hostToken });
+
+    const phone = connect();
+    await waitForEvent(phone, "connect" as never);
+    const joined = waitForEvent(host, "state:sync");
+    await emitAck(phone, "player:join", { code: first.code, name: "Alice" });
+    expect((await joined).players).toMatchObject([{ name: "Alice", connected: true }]);
+
+    const leftBehind = waitForEvent(host, "state:sync");
+    await emitAck(phone, "player:join", { code: second.code, name: "Alice" });
+
+    expect(await leftBehind).toMatchObject({
+      sessionId: first.sessionId,
+      players: [{ name: "Alice", connected: false }],
+    });
+
+    host.disconnect();
+    phone.disconnect();
   });
 
   it("auto-reveals once the server-driven timer runs out", async () => {

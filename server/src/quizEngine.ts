@@ -1,7 +1,7 @@
 import type { Server, Socket } from "socket.io";
 import { getSession, getSessionByCode, upsertPlayer } from "./sessionStore.js";
 import { haversineKm, scoreAnswer } from "./scoring.js";
-import type { Question, QuizSession } from "./types.js";
+import type { Player, Question, QuizSession } from "./types.js";
 import type {
   AckResponse,
   ClientToServerEvents,
@@ -15,8 +15,27 @@ import type {
 type IoServer = Server<ClientToServerEvents, ServerToClientEvents>;
 type IoSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 
-/** How long a disconnected player's identity/score is held before being dropped. */
-export const RECONNECT_GRACE_MS = 5 * 60 * 1000;
+/**
+ * The two grace periods a dropped phone gets. Both are deliberately generous:
+ * a venue's wifi, a locked iPhone or a backgrounded tab drop sockets all the
+ * time, and every one of those is a player still standing in the room - so
+ * nothing about the game should be decided the instant a socket goes quiet.
+ * Mutable so tests can shrink them; production never writes to this.
+ */
+export const graceTimings = {
+  /**
+   * How long a disconnected player's identity/score is held before being
+   * dropped from the session. Long enough to outlast a flat battery being
+   * put on a charger - the cost of holding it is a few bytes in a Map.
+   */
+  reconnectMs: 30 * 60 * 1000,
+  /**
+   * How long a disconnected player still counts as "in the room" for the
+   * "everyone has answered" check. Without it, one phone locking its screen
+   * mid-question cuts that question short for everyone else.
+   */
+  presenceMs: 20 * 1000,
+};
 const DEFAULT_TIME_LIMIT_SEC = 30;
 
 function room(sessionId: string): string {
@@ -59,13 +78,59 @@ function publicPlayers(session: QuizSession): PublicPlayer[] {
     .sort((a, b) => b.score - a.score);
 }
 
-/** Players who can currently submit an answer (excludes disconnected players in their reconnect grace period). */
-function connectedPlayerCount(session: QuizSession): number {
+/**
+ * Players expected to answer the question in flight. A player whose socket
+ * dropped seconds ago is still counted: they are almost certainly still in
+ * the room with a phone that is reconnecting, and dropping them immediately
+ * would let a single wifi blip trigger the "everyone answered" reveal and cut
+ * the question short for the rest of the room.
+ */
+function activePlayerCount(session: QuizSession): number {
+  const now = Date.now();
   let count = 0;
   for (const player of session.players.values()) {
-    if (player.connected) count++;
+    if (player.connected) {
+      count++;
+    } else if (player.disconnectedAt !== null && now - player.disconnectedAt < graceTimings.presenceMs) {
+      count++;
+    }
   }
   return count;
+}
+
+/** Reveals as soon as everyone still expected to answer has - the check behind both an answer and a lapsed presence grace. */
+function maybeAutoReveal(io: IoServer, session: QuizSession): void {
+  if (session.state !== "question") return;
+  const total = activePlayerCount(session);
+  if (total > 0 && session.currentAnswers.size >= total) {
+    revealQuestion(io, session);
+  }
+}
+
+/**
+ * Marks a player offline and starts both grace clocks. Used by the socket's
+ * own `disconnect` and by a socket that joins a *different* session, which
+ * abandons the player it was holding just as surely as a dropped connection.
+ */
+function markPlayerOffline(io: IoServer, session: QuizSession, player: Player): void {
+  player.socketId = null;
+  player.connected = false;
+  player.disconnectedAt = Date.now();
+  // The leaderboard says "offline" straight away - only the answer count
+  // above is allowed to keep pretending they are still here.
+  broadcastStateSync(io, session);
+
+  if (player.graceTimeout) clearTimeout(player.graceTimeout);
+  player.graceTimeout = setTimeout(() => {
+    session.players.delete(player.id);
+    broadcastStateSync(io, session);
+  }, graceTimings.reconnectMs);
+  player.graceTimeout.unref?.();
+
+  // Nothing else re-runs the quorum check once the presence grace lapses: if
+  // this player never comes back, the others would otherwise wait out the
+  // full timer even though they have all answered.
+  setTimeout(() => maybeAutoReveal(io, session), graceTimings.presenceMs + 50).unref?.();
 }
 
 function currentQuestion(session: QuizSession): Question | null {
@@ -212,6 +277,40 @@ export function registerQuizEngine(io: IoServer): void {
     return session;
   }
 
+  /**
+   * Detaches a socket from any session that isn't the one it is joining now.
+   * The client keeps a single shared Socket.IO connection for the whole SPA,
+   * so hosting a second quiz ("New quiz" off the final screen) or scanning a
+   * new join code reuses the socket that is still in the previous session's
+   * room. Left alone, that socket keeps receiving the old session's
+   * broadcasts - which is how a TV mid-question could suddenly show the
+   * *previous* quiz's final leaderboard, everyone in it long since offline,
+   * until the next sync for the real session put it back.
+   */
+  function leaveOtherSessions(socket: IoSocket, keepSessionId: string): void {
+    const keep = room(keepSessionId);
+    for (const joined of socket.rooms) {
+      if (joined !== keep && joined.startsWith("session:")) socket.leave(joined);
+    }
+
+    const previous = socketRegistry.get(socket.id);
+    if (!previous || previous.sessionId === keepSessionId) return;
+    const previousSession = getSession(previous.sessionId);
+    if (!previousSession) return;
+
+    if (previous.isHost) {
+      if (previousSession.hostSocketId === socket.id) previousSession.hostSocketId = null;
+      return;
+    }
+    // This socket was somebody in the old session, and isn't coming back to
+    // it: retire that player properly instead of leaving them "connected"
+    // forever behind a socket id that will never answer again.
+    const abandoned = previous.playerId ? previousSession.players.get(previous.playerId) : undefined;
+    if (abandoned && abandoned.socketId === socket.id) {
+      markPlayerOffline(io, previousSession, abandoned);
+    }
+  }
+
   io.on("connection", (socket: IoSocket) => {
     socket.on("host:join", ({ sessionId, hostToken }, ack) => {
       const session = getSession(sessionId);
@@ -223,6 +322,7 @@ export function registerQuizEngine(io: IoServer): void {
         ack(fail("not_host"));
         return;
       }
+      leaveOtherSessions(socket, session.id);
       session.hostSocketId = socket.id;
       socketRegistry.set(socket.id, { sessionId: session.id, isHost: true });
       socket.join(room(session.id));
@@ -247,11 +347,13 @@ export function registerQuizEngine(io: IoServer): void {
         return;
       }
       const player = result.player;
+      leaveOtherSessions(socket, session.id);
       if (player.graceTimeout) {
         clearTimeout(player.graceTimeout);
         player.graceTimeout = null;
       }
       player.connected = true;
+      player.disconnectedAt = null;
       player.socketId = socket.id;
 
       socketRegistry.set(socket.id, { sessionId: session.id, isHost: false, playerId: player.id });
@@ -383,17 +485,14 @@ export function registerQuizEngine(io: IoServer): void {
       session.currentAnswers.set(playerId, { playerId, value, score, correct, submittedAt: Date.now() });
       ack?.(ok({ score, correct }));
 
-      const total = connectedPlayerCount(session);
       io.to(room(session.id)).emit("question:progress", {
         answered: session.currentAnswers.size,
-        total,
+        total: activePlayerCount(session),
       });
 
-      // Skip the rest of the timer once every connected player has answered,
-      // instead of leaving everyone waiting out the full time limit.
-      if (total > 0 && session.currentAnswers.size >= total) {
-        revealQuestion(io, session);
-      }
+      // Skip the rest of the timer once everyone still expected to answer
+      // has, instead of leaving the room waiting out the full time limit.
+      maybeAutoReveal(io, session);
     });
 
     socket.on("disconnect", () => {
@@ -419,14 +518,7 @@ export function registerQuizEngine(io: IoServer): void {
       // otherwise a successful reconnect gets undone by its own predecessor.
       if (player.socketId !== socket.id) return;
 
-      player.socketId = null;
-      player.connected = false;
-      broadcastStateSync(io, session);
-
-      player.graceTimeout = setTimeout(() => {
-        session.players.delete(entry.playerId!);
-        broadcastStateSync(io, session);
-      }, RECONNECT_GRACE_MS);
+      markPlayerOffline(io, session, player);
     });
   });
 }

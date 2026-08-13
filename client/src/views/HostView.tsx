@@ -94,7 +94,13 @@ export function HostView() {
     const stopRejoining = onReconnect(socket, joinAsHost);
 
     const onDisconnect = () => setOnline(false);
-    const onStateSync = (payload: StateSyncPayload) => applySync(payload);
+    // One socket is shared by the whole SPA, so a sync for a quiz this tab
+    // used to host must never repaint this one - that is what put a stale
+    // final leaderboard on the TV in the middle of a live question.
+    const onStateSync = (payload: StateSyncPayload) => {
+      if (payload.sessionId !== sessionId) return;
+      applySync(payload);
+    };
     const onQuestionShow = (payload: QuestionShowPayload) => {
       setPhase("question");
       setQuestion(payload);

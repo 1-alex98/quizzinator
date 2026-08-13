@@ -75,6 +75,9 @@ export function PlayView() {
   // question already on screen doesn't wipe a half-dragged slider or pin.
   const shownQuestionId = useRef<string | null>(null);
   const joinRef = useRef<(playerName: string) => void>(() => {});
+  // Which session this phone is actually in, readable from the socket
+  // handlers below (which close over their first render's state).
+  const joinedSessionId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!code) return;
@@ -107,6 +110,7 @@ export function PlayView() {
       localStorage.setItem(playerTokenKey(code), data.playerToken);
       setPlayerId(data.playerId);
       setSessionId(data.sessionId);
+      joinedSessionId.current = data.sessionId;
       if (data.state === "question" && data.question) {
         showQuestion(data.question, data.answered);
         return;
@@ -178,6 +182,9 @@ export function PlayView() {
     // the session wins. Only acted on when it disagrees with what's on screen,
     // so a routine sync (another player joining) never disturbs this phone.
     const onStateSync = (payload: StateSyncPayload) => {
+      // The socket is shared with any earlier session this phone was in, so a
+      // sync for one of those must not drag this screen off the live quiz.
+      if (joinedSessionId.current && payload.sessionId !== joinedSessionId.current) return;
       if (payload.state === "question" && payload.question) {
         if (shownQuestionId.current !== payload.question.question.id) {
           showQuestion(payload.question, false);
