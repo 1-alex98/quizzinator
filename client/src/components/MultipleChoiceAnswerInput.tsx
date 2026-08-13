@@ -37,7 +37,13 @@ export function MultipleChoiceAnswerInput({
         // deselecting would just leave the player with nothing to submit.
         if (next !== null) onChange(next);
       }}
-      sx={{ width: "100%", maxWidth: 420, gap: 1.5 }}
+      // Sized against the viewport height, not in fixed pixels: six options
+      // plus a countdown, a prompt and a submit button leave a small phone
+      // with nothing for the question's image (see QuestionPrompt). Every
+      // clamp bottoms out above the ~44px minimum tap target, so the options
+      // give up padding on a short screen rather than tappability - and the
+      // picture keeps a usable slot.
+      sx={{ width: "100%", maxWidth: 420, gap: "clamp(6px, 1.2vh, 12px)" }}
     >
       {question.options.map((option, index) => (
         <ToggleButton
@@ -47,7 +53,8 @@ export function MultipleChoiceAnswerInput({
             justifyContent: "flex-start",
             gap: 1.5,
             px: 2,
-            py: 1.5,
+            py: "clamp(6px, 1.1vh, 12px)",
+            minHeight: 44,
             border: 1,
             borderColor: "divider",
             borderRadius: 3,
@@ -69,8 +76,8 @@ export function MultipleChoiceAnswerInput({
               flex: "0 0 auto",
               display: "grid",
               placeItems: "center",
-              width: 34,
-              height: 34,
+              width: "clamp(28px, 4.4vh, 34px)",
+              height: "clamp(28px, 4.4vh, 34px)",
               borderRadius: "50%",
               bgcolor: "background.default",
               color: "text.primary",
@@ -80,7 +87,12 @@ export function MultipleChoiceAnswerInput({
             {LETTERS[index] ?? index + 1}
           </Stack>
           <Typography
-            sx={{ textAlign: "left", fontSize: "1.15rem", fontWeight: 600, lineHeight: 1.25 }}
+            sx={{
+              textAlign: "left",
+              fontSize: "clamp(1rem, 2.1vh, 1.15rem)",
+              fontWeight: 600,
+              lineHeight: 1.25,
+            }}
           >
             {option}
           </Typography>

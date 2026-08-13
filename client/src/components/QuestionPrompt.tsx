@@ -31,9 +31,17 @@ export function QuestionPrompt({
 }) {
   const [imageOpen, setImageOpen] = useState(true);
   const [zoomed, setZoomed] = useState(false);
+  // A URL that never loads (a 404, a host that blocks hotlinking, a phone
+  // that is on the venue wifi but not on the internet) is common enough with
+  // sets written by an LLM to deserve a real answer: say so, and give the
+  // space back to the question instead of leaving a blank frame.
+  // Keyed by URL rather than a bare boolean, so the next question's image
+  // still gets its own chance to load.
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
   const isHost = variant === "host";
   const isPanel = variant === "panel";
-  const imageUrl = question.media?.imageUrl;
+  const declaredUrl = question.media?.imageUrl;
+  const imageUrl = declaredUrl && declaredUrl !== brokenUrl ? declaredUrl : undefined;
   // Whether the image is claiming leftover space rather than being sized by
   // its own content - true on the host and mobile answer screens.
   const fills = Boolean(imageUrl) && !isPanel;
@@ -55,7 +63,15 @@ export function QuestionPrompt({
     <Box
       sx={{
         flex: fills ? "1 1 0" : "0 0 auto",
-        minHeight: 0,
+        // "All the leftover space" is only generous while there *is* leftover
+        // space. A phone showing six tap targets and a submit button has
+        // almost none, and `1 1 0` with no floor happily settled at a 30px
+        // sliver - or at literally zero on a small phone, which reads as a
+        // broken image rather than as a tight layout. The floor is what the
+        // rest of the screen has to fit around; the answer input compresses
+        // (and, past the point where even that is not enough, scrolls) instead
+        // of eating the picture.
+        minHeight: fills ? "min(20vh, 200px)" : 0,
         width: "100%",
         display: "flex",
         alignItems: "center",
@@ -66,6 +82,7 @@ export function QuestionPrompt({
         component="img"
         src={imageUrl}
         alt=""
+        onError={() => setBrokenUrl(imageUrl)}
         onClick={isHost ? undefined : () => setZoomed(true)}
         sx={{
           display: "block",
@@ -91,15 +108,22 @@ export function QuestionPrompt({
     <Stack
       alignItems="center"
       justifyContent="center"
-      gap={isHost ? 2 : 1.5}
+      gap={isHost ? 2 : "clamp(6px, 1.2vh, 12px)"}
       sx={{
         width: "100%",
         minWidth: 0,
         // Only a filling image claims the parent's leftover space; text-only
         // prompts and the geo panel stay intrinsically sized, so they still
         // centre inside the screen / let the card shrink to its contents.
-        flex: fills ? "1 1 0" : "0 0 auto",
-        minHeight: 0,
+        //
+        // `1 1 auto` with an auto min-height, not `1 1 0` with a zero one: the
+        // image now has a floor, so a shrink-to-nothing block would be one
+        // whose contents no longer fit inside it - and an overflowing flex
+        // item paints straight over its neighbours (the prompt landing on top
+        // of the first answer option). The block keeps its content height; the
+        // answer column below it is the part that gives.
+        flex: fills ? "1 1 auto" : "0 0 auto",
+        minHeight: fills ? "auto" : 0,
       }}
     >
       {isHost
@@ -139,6 +163,18 @@ export function QuestionPrompt({
               </Stack>
             </>
           )}
+      {declaredUrl && !imageUrl && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          gap={0.75}
+          sx={{ flex: "0 0 auto", color: "text.secondary" }}
+        >
+          <AppIcon name="broken_image" fontSize="small" />
+          <Typography variant="body2">This question&rsquo;s image could not be loaded.</Typography>
+        </Stack>
+      )}
+
       <Typography variant={isHost ? "h2" : "h3"} sx={{ flex: "0 0 auto", textWrap: "balance" }}>
         {question.prompt}
       </Typography>

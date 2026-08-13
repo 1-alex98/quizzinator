@@ -301,7 +301,7 @@ export function PlayView() {
       // image on it, and every pixel of padding is a pixel the picture doesn't get.
       <Screen
         phaseKey={`answering-${question.question.id}`}
-        gap={2}
+        gap="clamp(8px, 1.6vh, 16px)"
         sx={{ justifyContent: "space-between", px: 2, py: 2 }}
       >
         <Stack alignItems="center" gap={1} sx={{ flex: "0 0 auto" }}>
@@ -313,17 +313,31 @@ export function PlayView() {
           />
         </Stack>
         <QuestionPrompt question={question.question} variant="mobile" />
-        <Stack alignItems="center" gap={3} sx={{ flex: "0 0 auto", width: "100%" }}>
+        {/* The image above now claims a minimum slot instead of only the
+            leftovers, so this is the part that gives when a small phone runs
+            out of screen: the input scrolls inside its own box. Submit sits
+            outside that box on purpose - the one control a player must always
+            be able to reach can't be the thing that scrolled off. */}
+        <Stack
+          alignItems="center"
+          sx={{ flex: "0 1 auto", minHeight: 0, overflowY: "auto", width: "100%", py: 0.5 }}
+        >
           <AnswerInput
             question={question.question}
             value={answerValue}
             onChange={setAnswerValue}
             onSubmit={doSubmit}
           />
-          <Button size="large" disabled={!canSubmit} onClick={doSubmit} startIcon={<AppIcon name="send" />}>
-            Submit
-          </Button>
         </Stack>
+        <Button
+          size="large"
+          disabled={!canSubmit}
+          onClick={doSubmit}
+          startIcon={<AppIcon name="send" />}
+          sx={{ flex: "0 0 auto", py: "clamp(10px, 1.6vh, 14px)" }}
+        >
+          Submit
+        </Button>
       </Screen>
     );
   }
