@@ -40,6 +40,14 @@
   overflow: hidden;
 }
 
+/* Leaflet puts its zoom control in the top-left corner, which is exactly
+   where the answer screen floats its countdown - move it out of the way
+   rather than dropping it (phones pinch to zoom, laptops need the buttons). */
+.geo-screen__map .leaflet-top.leaflet-left {
+  top: auto;
+  bottom: 0;
+}
+
 /* Leaflet paints its own light-grey backdrop while tiles load, which flashes
    white against the dark theme on every question. */
 .leaflet-container {

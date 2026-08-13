@@ -130,6 +130,9 @@ export function GeoMapInput({
           left: "50%",
           transform: "translateX(-50%)",
           zIndex: OVER_MAP,
+          // MUI's translucent disabled fill vanishes against pale map tiles;
+          // keep it opaque so "place a pin first" still reads as a button.
+          "&.Mui-disabled": { bgcolor: "background.paper", color: "text.secondary" },
         }}
       >
         Confirm pin

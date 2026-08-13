@@ -27,9 +27,23 @@ realtime/reconnect logic and keep the deploy to a single service.
 
 | Type | Player input | Scoring |
 |---|---|---|
-| `number` | native `<input type="range">` slider, bounds/step from the question | distance from `correctValue`, closer = more points |
+| `number` | slider (MUI `Slider`, a native `<input type="range">` under the hood), bounds/step from the question | distance from `correctValue`, closer = more points, linear falloff to 0 at `scoreToleranceValue` |
 | `geo` | tap-to-place a pin on a [Leaflet](https://leafletjs.com/) map (OpenStreetMap tiles — free, no API key, matters for free-tier hosting) | Haversine distance to `correctLat/correctLng`; points fall off to 0 at `maxDistanceKm` |
 | `fuzzy-text` | free-text input | normalized similarity via [`fastest-levenshtein`](https://github.com/ott-jarv/fastest-levenshtein) against `acceptedAnswers`, correct if similarity ≥ per-question `threshold` |
+
+**Score falloff is per-question and independent of the input widget.** Both
+partial-credit types take a tolerance field — `maxDistanceKm` for `geo`,
+`scoreToleranceValue` for `number` — naming the error at which the score
+reaches 0, with a linear falloff from full `points` at an exact hit. For
+`number` this is deliberately *not* the slider's own `min`/`max`: a slider
+can span 0-2026 so the answer isn't obvious from where the handle starts,
+while only guesses within ±20 score anything. It defaults to `max - min`
+(the behaviour from before the field existed) and a tolerance of 0 means
+only an exact hit scores. Both are **JSON-only, not editable from the admin
+screen** — the admin flow is deliberately one click from "pick a set" to a
+shareable join code, and a per-question editor would turn that into a
+form-filling step for something a question author already had to decide
+when writing the set.
 
 Shared fields: every question has `points`, an optional `media.imageUrl`
 (remote URL or a path resolved from an extracted question-set ZIP), and an
@@ -82,6 +96,17 @@ WebSocket behavior over some proxies/networks is a common source of pain,
 long-polling fallback sidesteps that). The full join/start/answer/reveal
 event protocol is defined by the realtime-engine issue, not this scaffold.
 
+**Reconnecting is a handshake, not just a transport concern.** Socket.IO
+restores the *connection* on its own, but the reconnected socket has a new
+socket id that the server does not associate with any session — it is not
+in the session's room and receives nothing further. So both clients re-emit
+their join (`host:join` / `player:join`) on every `connect`, not only on
+mount, and the player's display name is persisted next to their id so the
+phone can do this unattended. `player:join`'s ack carries the in-flight
+question and whether that player already answered it, because the ack is
+the only per-socket message a rejoining phone gets. This is what makes an
+iPhone screen-lock mid-question a non-event rather than a dead session.
+
 ## Access control (decided)
 
 There are no accounts, so "who's allowed to do what" rests entirely on two
@@ -114,11 +139,22 @@ requirements:
   (`client/dist`) as static files *and* the API/websocket from the same
   origin/port. No separate static host, no CORS complexity, matches a single
   Render "Node" web service and a single process on the home server.
-- **Design system**: no component library (MUI, etc.) — a small hand-rolled
-  CSS file (`client/src/styles.css`) using the Material Symbols Rounded
-  icon font (loaded from Google Fonts) plus a couple of CSS custom
-  properties. Keeps the bundle light for low-powered phones and avoids
-  fighting a heavy library for a "mostly icons, little text, no scroll" UI.
+- **Design system**: **MUI** (`@mui/material` + Emotion) with a single dark
+  theme in `client/src/theme.ts` — one palette, one type scale and one set
+  of component defaults shared by the TV and the phones, with `clamp()`
+  sizes so the same components read from a sofa and from a hand. This
+  *reverses* the original "no component library, hand-rolled CSS" decision:
+  the hand-rolled stylesheet was cheap but the app looked it, and matching
+  Material's states/elevation/focus behaviour by hand was turning into a
+  second-rate reimplementation of MUI. It costs ~80kB gzipped
+  (132kB → 212kB of gzipped JS), paid once on join over venue wifi and
+  cached after; the confetti library is lazily imported so it stays off
+  that first load. Icons stay on the Material Symbols Rounded *font*
+  (loaded from Google Fonts, wrapped by `components/AppIcon.tsx`) rather
+  than `@mui/icons-material`, which would ship SVG components for a handful
+  of glyphs. What is left in `client/src/styles.css` is only what a
+  component library can't own: the icon font's variable-axis setup and
+  Leaflet's imperatively-created DOM.
 - **Testing**: Vitest in both workspaces (+ Supertest for the Express API,
   Testing Library for React components).
 - **CI**: GitHub Actions (`.github/workflows/ci.yml`) runs `npm ci`, lint
@@ -174,9 +210,12 @@ server/
 client/
   src/
     main.tsx            # router: /, /host/:sessionId, /play/:code, /admin
+    theme.ts             # the one MUI dark theme (palette, type scale, defaults)
     views/               # one component per route
-    lib/socket.ts         # shared Socket.IO client
-    styles.css            # design tokens + Material Symbols setup
+    components/           # Screen shell, answer inputs, leaderboard, icons
+    lib/socket.ts         # shared Socket.IO client + rejoin-on-reconnect helper
+    lib/celebrate.ts       # lazily-imported confetti, no-op if reduced motion
+    styles.css            # only what MUI can't own: icon font axes + Leaflet
 Dockerfile              # multi-stage build -> small node:20-alpine runtime image
 .dockerignore
 .github/workflows/ci.yml # lint/test/build, then build+push the Docker image to GHCR
@@ -209,3 +248,8 @@ All gameplay, the question-set import pipeline, and CI/CD are implemented:
 5. CI/CD + deployment — CI builds and pushes a Docker image to the GitHub
    Container Registry on every push to `main`; the host lobby screen shows
    the shareable join link plus a QR code.
+6. UI on MUI + polish — one dark theme across host/play/admin, redesigned
+   TV leaderboard, shared countdown ring, big host images with a
+   collapsible image toggle on mobile, confetti on a correct answer,
+   per-question `scoreToleranceValue`, and rejoin-on-reconnect so a locked
+   phone rejoins its session by itself.
