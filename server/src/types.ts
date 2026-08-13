@@ -1,6 +1,6 @@
 // Shared domain types for quiz sessions, questions and players.
 
-export type QuestionType = "number" | "geo" | "fuzzy-text";
+export type QuestionType = "number" | "geo" | "fuzzy-text" | "multiple-choice";
 
 export interface QuestionMedia {
   /** Either a remote URL or a path relative to the question set's extracted image dir. */
@@ -47,7 +47,15 @@ export interface FuzzyTextQuestion extends QuestionBase {
   threshold: number;
 }
 
-export type Question = NumberQuestion | GeoQuestion | FuzzyTextQuestion;
+export interface MultipleChoiceQuestion extends QuestionBase {
+  type: "multiple-choice";
+  /** Answer options, shown in this order; the player submits the index of one. */
+  options: string[];
+  /** 0-based index into `options`. Never sent to clients before the reveal. */
+  correctIndex: number;
+}
+
+export type Question = NumberQuestion | GeoQuestion | FuzzyTextQuestion | MultipleChoiceQuestion;
 
 export interface QuestionSet {
   id: string;

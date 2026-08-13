@@ -9,6 +9,7 @@ import { HomeView } from "./views/HomeView.js";
 import { HostView } from "./views/HostView.js";
 import { PlayView } from "./views/PlayView.js";
 import { AdminView } from "./views/AdminView.js";
+import { DocsView } from "./views/DocsView.js";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -23,6 +24,8 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/play/:code" element={<PlayView />} />
           {/* Question set upload (json/zip). */}
           <Route path="/admin" element={<AdminView />} />
+          {/* The question set format, for whoever is writing one (or the LLM they ask). */}
+          <Route path="/docs/question-format" element={<DocsView />} />
         </Routes>
       </BrowserRouter>
     </ThemeProvider>

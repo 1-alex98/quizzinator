@@ -1,5 +1,11 @@
 import { distance as levenshteinDistance } from "fastest-levenshtein";
-import type { FuzzyTextQuestion, GeoQuestion, NumberQuestion, Question } from "./types.js";
+import type {
+  FuzzyTextQuestion,
+  GeoQuestion,
+  MultipleChoiceQuestion,
+  NumberQuestion,
+  Question,
+} from "./types.js";
 
 export interface ScoreResult {
   score: number;
@@ -77,6 +83,20 @@ function scoreFuzzyText(question: FuzzyTextQuestion, value: unknown): ScoreResul
   return { score: correct ? question.points : 0, correct };
 }
 
+/**
+ * All-or-nothing, unlike number/geo: there is no meaningful "close" on a list
+ * of four options, and partial credit for a wrong tap would pay out for
+ * guessing. The submitted value is the index of the chosen option.
+ */
+function scoreMultipleChoice(question: MultipleChoiceQuestion, value: unknown): ScoreResult {
+  // Strictly an integer, with no coercion: Number(null) and Number("") are
+  // both 0, which would hand full points to an empty answer whenever option 0
+  // happens to be the right one.
+  if (typeof value !== "number" || !Number.isInteger(value)) return { score: 0, correct: false };
+  const correct = value === question.correctIndex;
+  return { score: correct ? question.points : 0, correct };
+}
+
 /** Server-authoritative scoring for a submitted answer, dispatched by question type. */
 export function scoreAnswer(question: Question, value: unknown): ScoreResult {
   switch (question.type) {
@@ -86,5 +106,7 @@ export function scoreAnswer(question: Question, value: unknown): ScoreResult {
       return scoreGeo(question, value);
     case "fuzzy-text":
       return scoreFuzzyText(question, value);
+    case "multiple-choice":
+      return scoreMultipleChoice(question, value);
   }
 }

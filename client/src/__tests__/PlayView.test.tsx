@@ -61,6 +61,9 @@ function captureSocketHandlers() {
   };
 }
 
+/** The socket handlers registered by the most recent joinAndReachAnswering call. */
+let handlersRef: { fire(event: string, payload: unknown): void };
+
 function joinAndReachAnswering(code: string, question: unknown) {
   socketMock.emit.mockImplementation((event, _payload, ack) => {
     if (event === "player:join") {
@@ -68,6 +71,7 @@ function joinAndReachAnswering(code: string, question: unknown) {
     }
   });
   const handlers = captureSocketHandlers();
+  handlersRef = handlers;
   renderAt(code);
   fireEvent.change(screen.getByPlaceholderText("Your name"), { target: { value: "Alice" } });
   fireEvent.click(screen.getByText("Join"));
@@ -403,5 +407,105 @@ describe("PlayView", () => {
 
     expect(screen.getByText("Final score: 150")).toBeTruthy();
     expect(screen.getByText("Rank #2 of 2")).toBeTruthy();
+  });
+
+  it("submits the index of the tapped option for a multiple-choice question", () => {
+    joinAndReachAnswering("ABCDE", {
+      id: "q-choice",
+      type: "multiple-choice",
+      prompt: "Which came first?",
+      points: 100,
+      options: ["The Walkman", "The CD player", "The iPod"],
+    });
+
+    // Nothing is picked yet, so there is nothing to submit.
+    expect(screen.getByText("Submit").closest("button")).toHaveProperty("disabled", true);
+
+    fireEvent.click(screen.getByText("The CD player"));
+    fireEvent.click(screen.getByText("Submit"));
+
+    // The index travels, not the option text: the server scores against
+    // correctIndex, and an index survives punctuation in an option.
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "answer:submit",
+      { sessionId: "s1", value: 1 },
+      expect.any(Function),
+    );
+  });
+
+  // Tapping an option twice would otherwise deselect it in MUI's toggle
+  // group, leaving the player with a disabled Submit and no idea why.
+  it("keeps a multiple-choice option selected when it is tapped again", () => {
+    joinAndReachAnswering("ABCDE", {
+      id: "q-choice",
+      type: "multiple-choice",
+      prompt: "Which came first?",
+      points: 100,
+      options: ["The Walkman", "The CD player"],
+    });
+
+    fireEvent.click(screen.getByText("The Walkman"));
+    fireEvent.click(screen.getByText("The Walkman"));
+    fireEvent.click(screen.getByText("Submit"));
+
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "answer:submit",
+      { sessionId: "s1", value: 0 },
+      expect.any(Function),
+    );
+  });
+
+  // "Play again" replays the same question set, so the ids repeat. The phone
+  // has to treat the repeat as a fresh question instead of the one it last
+  // rendered, or it stays stuck on the previous game's result screen.
+  it("re-arms for a new game that replays the same question id", () => {
+    const question = {
+      id: "q1",
+      type: "fuzzy-text",
+      prompt: "Who?",
+      points: 100,
+    };
+    joinAndReachAnswering("ABCDE", question);
+
+    fireEvent.change(screen.getByPlaceholderText("Type your answer…"), { target: { value: "Marie" } });
+    fireEvent.click(screen.getByText("Submit"));
+
+    act(() => {
+      handlersRef.fire("question:revealed", {
+        index: 0,
+        correctAnswer: { acceptedAnswers: ["Marie Curie"] },
+        results: [{ playerId: "p1", value: "Marie", score: 100, correct: true, totalScore: 100 }],
+        leaderboard: [{ id: "p1", name: "Alice", connected: true, score: 100 }],
+      });
+    });
+    expect(screen.getByText("+100 points")).toBeTruthy();
+
+    // The host restarts: the server puts the session back in the lobby.
+    act(() => {
+      handlersRef.fire("state:sync", {
+        sessionId: "s1",
+        code: "ABCDE",
+        state: "lobby",
+        currentQuestionIndex: -1,
+        totalQuestions: 1,
+        players: [{ id: "p1", name: "Alice", connected: true, score: 0 }],
+      });
+    });
+    expect(screen.getByText("Waiting for the host to start…")).toBeTruthy();
+
+    act(() => {
+      handlersRef.fire("question:show", {
+        question,
+        index: 0,
+        total: 1,
+        endsAt: Date.now() + 30_000,
+        timeLimitSec: 30,
+      });
+    });
+
+    // Same question id as round one, but it must be answerable again - and
+    // with an empty box, not last game's answer.
+    const input = screen.getByPlaceholderText("Type your answer…") as HTMLInputElement;
+    expect(input.value).toBe("");
   });
 });

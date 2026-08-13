@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { HostView } from "../views/HostView.js";
 
@@ -51,6 +51,25 @@ function captureSocketHandlers() {
       act(() => handlers.get(event)?.(payload));
     },
   };
+}
+
+/** Acks host:join with a lobby sync, which is the precondition for every screen below. */
+function joinsAs({ players, totalQuestions }: { players: unknown[]; totalQuestions: number }) {
+  socketMock.emit.mockImplementation((event, _payload, ack) => {
+    if (event === "host:join") {
+      ack({
+        ok: true,
+        data: {
+          sessionId: "s1",
+          code: "ABCDE",
+          state: "lobby",
+          currentQuestionIndex: -1,
+          totalQuestions,
+          players,
+        },
+      });
+    }
+  });
 }
 
 describe("HostView", () => {
@@ -180,8 +199,12 @@ describe("HostView", () => {
       leaderboard: [{ id: "p1", name: "Alice", connected: true, score: 80 }],
     });
 
-    expect(screen.getByText("Correct answer: 50")).toBeTruthy();
-    expect(screen.getByText("Alice: 42 — +80")).toBeTruthy();
+    expect(screen.getByText("Correct answer")).toBeTruthy();
+    expect(screen.getByText("50")).toBeTruthy();
+    // Name, guess and points each get their own slot in the answer card.
+    const row = screen.getByText("42").closest("li") as HTMLElement;
+    expect(within(row).getByText("Alice")).toBeTruthy();
+    expect(within(row).getByText("+80")).toBeTruthy();
   });
 
   it("shows a map with the correct location and player guesses on a geo reveal", () => {
@@ -258,8 +281,11 @@ describe("HostView", () => {
       leaderboard: [{ id: "p1", name: "Alice", connected: true, score: 100 }],
     });
 
-    expect(screen.getByText("Accepted answer: Marie Curie")).toBeTruthy();
-    expect(screen.getByText("Alice: marie curie — +100")).toBeTruthy();
+    expect(screen.getByText("Accepted answer")).toBeTruthy();
+    expect(screen.getByText("Marie Curie")).toBeTruthy();
+    const row = screen.getByText("“marie curie”").closest("li") as HTMLElement;
+    expect(within(row).getByText("Alice")).toBeTruthy();
+    expect(within(row).getByText("+100")).toBeTruthy();
   });
 
   it("shows the per-question point delta alongside each player's total on reveal", () => {
@@ -298,9 +324,10 @@ describe("HostView", () => {
 
     // Name, running total and the delta gained this round are separate
     // elements in the redesigned leaderboard so they can be styled apart.
-    expect(screen.getByText("Alice")).toBeTruthy();
-    expect(screen.getByText("80")).toBeTruthy();
-    expect(screen.getByText("+80")).toBeTruthy();
+    const board = document.querySelector(".leaderboard") as HTMLElement;
+    expect(within(board).getByText("Alice")).toBeTruthy();
+    expect(within(board).getByText("80")).toBeTruthy();
+    expect(within(board).getByText("+80")).toBeTruthy();
   });
 
   it("truncates a large lobby player list with a summary", () => {
@@ -377,6 +404,93 @@ describe("HostView", () => {
     });
 
     expect(container.querySelectorAll(".leaderboard li")).toHaveLength(11);
-    expect(screen.getByText("+10 more players")).toBeTruthy();
+    const board = container.querySelector(".leaderboard") as HTMLElement;
+    expect(within(board).getByText("+10 more players")).toBeTruthy();
+    // The answer card truncates the same way, so a full room can't push the
+    // reveal off a no-scroll screen.
+    const answerCard = container.querySelector(".reveal-answer") as HTMLElement;
+    expect(within(answerCard).getByText("+10 more players")).toBeTruthy();
+  });
+
+  it("shows a multiple-choice reveal with the winning option and each player's pick", () => {
+    joinsAs({ players: [{ id: "p1", name: "Alice", connected: true, score: 0 }], totalQuestions: 1 });
+    const handlers = captureSocketHandlers();
+    renderAt("s1");
+
+    handlers.fire("question:show", {
+      question: {
+        id: "q1",
+        type: "multiple-choice",
+        prompt: "Which came first?",
+        points: 100,
+        options: ["The Walkman", "The CD player", "The iPod"],
+      },
+      index: 0,
+      total: 1,
+      endsAt: Date.now() + 30_000,
+      timeLimitSec: 30,
+    });
+
+    handlers.fire("question:revealed", {
+      index: 0,
+      correctAnswer: { correctIndex: 0, correctOption: "The Walkman" },
+      results: [{ playerId: "p1", value: 1, score: 0, correct: false, totalScore: 0 }],
+      leaderboard: [{ id: "p1", name: "Alice", connected: true, score: 0 }],
+    });
+
+    // Lettered both places, so the room can compare a pick to the answer
+    // without re-reading either option in full.
+    expect(screen.getByText("A. The Walkman")).toBeTruthy();
+    expect(screen.getByText("B. The CD player")).toBeTruthy();
+  });
+
+  it("offers a new game at the end and restarts the same session", () => {
+    joinsAs({ players: [], totalQuestions: 1 });
+    const handlers = captureSocketHandlers();
+    renderAt("s1");
+
+    handlers.fire("session:ended", {
+      players: [{ id: "p1", name: "Alice", connected: true, score: 100 }],
+    });
+
+    fireEvent.click(screen.getByText("New game, same questions"));
+
+    // Restarting this session (rather than creating one) is what keeps the
+    // join code on the TV and every phone in the room valid for round two.
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "session:restart",
+      { sessionId: "s1" },
+      expect.any(Function),
+    );
+
+    // The server answers with a lobby state:sync; the TV must land back on
+    // the lobby rather than keep showing the final leaderboard.
+    handlers.fire("state:sync", {
+      sessionId: "s1",
+      code: "ABCDE",
+      state: "lobby",
+      currentQuestionIndex: -1,
+      totalQuestions: 1,
+      players: [{ id: "p1", name: "Alice", connected: true, score: 0 }],
+    });
+
+    expect(screen.getByText("Start quiz")).toBeTruthy();
+    expect(screen.queryByText("Final leaderboard")).toBeNull();
+  });
+
+  it("renders the join link as a clickable anchor", () => {
+    joinsAs({ players: [], totalQuestions: 0 });
+    renderAt("s1");
+
+    const link = screen.getByText(`${window.location.origin}/play/ABCDE`);
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe(`${window.location.origin}/play/ABCDE`);
+  });
+
+  it("offers the question set schema for copying from the lobby", () => {
+    joinsAs({ players: [], totalQuestions: 0 });
+    renderAt("s1");
+
+    expect(screen.getByRole("button", { name: /Copy JSON schema/ })).toBeTruthy();
   });
 });

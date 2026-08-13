@@ -543,4 +543,92 @@ describe("quiz engine", () => {
 
     host.disconnect();
   }, 5000);
+
+  it("keeps correctIndex off the wire for multiple-choice questions until the reveal", async () => {
+    const choiceQuestions = [
+      {
+        id: "q-choice",
+        type: "multiple-choice",
+        prompt: "Which came first?",
+        points: 100,
+        timeLimitSec: 30,
+        options: ["The Walkman", "The CD player", "The iPod"],
+        correctIndex: 0,
+      },
+    ];
+    const { sessionId, code, hostToken } = await createLobby(choiceQuestions);
+
+    const host = connect();
+    const player = connect();
+    await Promise.all([waitForEvent(host, "connect" as never), waitForEvent(player, "connect" as never)]);
+    await emitAck(host, "host:join", { sessionId, hostToken });
+    await emitAck(player, "player:join", { code, name: "Alice" });
+
+    const playerSawQuestion = waitForEvent(player, "question:show");
+    await emitAck(host, "session:start", { sessionId });
+    const shown = await playerSawQuestion;
+
+    // The phone needs the options to render them; the answer stays server-side.
+    expect(shown.question).toMatchObject({ options: ["The Walkman", "The CD player", "The iPod"] });
+    expect(shown.question).not.toHaveProperty("correctIndex");
+
+    const revealed = waitForEvent(host, "question:revealed") as Promise<QuestionRevealedPayload>;
+    const answerAck = await emitAck(player, "answer:submit", { sessionId, value: 0 });
+    expect(answerAck).toEqual({ ok: true, data: { score: 100, correct: true } });
+
+    // The reveal carries the option text too, so the TV can name the answer
+    // without the host screen having to hold on to the question's options.
+    expect((await revealed).correctAnswer).toEqual({ correctIndex: 0, correctOption: "The Walkman" });
+
+    host.disconnect();
+    player.disconnect();
+  });
+
+  // "Play again" reuses the session rather than creating one, so the code on
+  // the TV and every phone's stored identity survive into the next game.
+  it("restarts into the lobby with scores reset, keeping the players, question set and join code", async () => {
+    const { sessionId, code, hostToken } = await createLobby(numberQuestions);
+
+    const host = connect();
+    const player = connect();
+    await Promise.all([waitForEvent(host, "connect" as never), waitForEvent(player, "connect" as never)]);
+    await emitAck(host, "host:join", { sessionId, hostToken });
+    const joinAck = (await emitAck(player, "player:join", { code, name: "Alice" })) as AckResponse<PlayerJoinAck>;
+    const playerId = (joinAck as { ok: true; data: PlayerJoinAck }).data.playerId;
+
+    const questionShown = waitForEvent(player, "question:show");
+    await emitAck(host, "session:start", { sessionId });
+    await questionShown;
+    const revealed = waitForEvent(host, "question:revealed") as Promise<QuestionRevealedPayload>;
+    await emitAck(player, "answer:submit", { sessionId, value: 50 });
+    expect((await revealed).leaderboard[0]).toMatchObject({ id: playerId, score: 100 });
+
+    const playerSawLobby = waitForEvent(player, "state:sync");
+    const restartAck = await emitAck(host, "session:restart", { sessionId });
+    expect(restartAck.ok).toBe(true);
+
+    const sync = await playerSawLobby;
+    expect(sync).toMatchObject({ state: "lobby", code, currentQuestionIndex: -1, totalQuestions: 2 });
+    expect(sync.players).toEqual([{ id: playerId, name: "Alice", connected: true, score: 0 }]);
+
+    // The same set can be played straight through again from question one.
+    const secondGame = waitForEvent(player, "question:show");
+    await emitAck(host, "session:start", { sessionId });
+    expect((await secondGame).question.id).toBe("q1");
+
+    host.disconnect();
+    player.disconnect();
+  });
+
+  it("rejects session:restart from a socket that isn't the host", async () => {
+    const { sessionId, code } = await createLobby(numberQuestions);
+    const impostor = connect();
+    await waitForEvent(impostor, "connect" as never);
+    await emitAck(impostor, "player:join", { code, name: "Mallory" });
+
+    const ack = await emitAck(impostor, "session:restart", { sessionId });
+    expect(ack).toEqual({ ok: false, error: "not_host" });
+
+    impostor.disconnect();
+  });
 });

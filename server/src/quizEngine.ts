@@ -46,6 +46,10 @@ function sanitizeQuestion(question: Question): PublicQuestion {
       return { ...base, type: "geo", maxDistanceKm: question.maxDistanceKm };
     case "fuzzy-text":
       return { ...base, type: "fuzzy-text" };
+    case "multiple-choice":
+      // correctIndex is deliberately not spread in: the options go to the
+      // phones, the answer stays here until the reveal.
+      return { ...base, type: "multiple-choice", options: question.options };
   }
 }
 
@@ -112,6 +116,8 @@ function extractCorrectAnswer(question: Question): unknown {
       return { correctLat: question.correctLat, correctLng: question.correctLng };
     case "fuzzy-text":
       return { acceptedAnswers: question.acceptedAnswers };
+    case "multiple-choice":
+      return { correctIndex: question.correctIndex, correctOption: question.options[question.correctIndex] };
   }
 }
 
@@ -315,6 +321,31 @@ export function registerQuizEngine(io: IoServer): void {
       clearTimer(session);
       session.state = "ended";
       io.to(room(session.id)).emit("session:ended", { players: publicPlayers(session) });
+      ack?.(ok(null));
+    });
+
+    // "Play again": the same room, the same question set, everyone back on
+    // zero. Deliberately reuses this session rather than creating a new one,
+    // so the join code on the TV and every phone's stored identity stay
+    // valid - nobody has to re-scan the QR code between games.
+    socket.on("session:restart", ({ sessionId }, ack) => {
+      const session = requireHostSession(socket, sessionId);
+      if (!session) {
+        ack?.(fail("not_host"));
+        return;
+      }
+      if (!session.questionSet || session.questionSet.questions.length === 0) {
+        ack?.(fail("no_question_set"));
+        return;
+      }
+      clearTimer(session);
+      session.state = "lobby";
+      session.currentQuestionIndex = -1;
+      session.currentAnswers = new Map();
+      for (const player of session.players.values()) {
+        player.score = 0;
+      }
+      broadcastStateSync(io, session);
       ack?.(ok(null));
     });
 

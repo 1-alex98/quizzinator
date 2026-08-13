@@ -9,7 +9,12 @@ export type AckResponse<T> = { ok: true; data: T } | { ok: false; error: string 
 export type PublicQuestion =
   | Pick<Extract<Question, { type: "number" }>, "id" | "type" | "prompt" | "points" | "timeLimitSec" | "media" | "min" | "max" | "step">
   | Pick<Extract<Question, { type: "geo" }>, "id" | "type" | "prompt" | "points" | "timeLimitSec" | "media" | "maxDistanceKm">
-  | Pick<Extract<Question, { type: "fuzzy-text" }>, "id" | "type" | "prompt" | "points" | "timeLimitSec" | "media">;
+  | Pick<Extract<Question, { type: "fuzzy-text" }>, "id" | "type" | "prompt" | "points" | "timeLimitSec" | "media">
+  // `options` ships (the phone has to render them), `correctIndex` does not.
+  | Pick<
+      Extract<Question, { type: "multiple-choice" }>,
+      "id" | "type" | "prompt" | "points" | "timeLimitSec" | "media" | "options"
+    >;
 
 export interface PublicPlayer {
   id: string;
@@ -98,6 +103,9 @@ export interface ClientToServerEvents {
   "question:next": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   "question:reveal": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   "session:end": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
+  // Back to the lobby with the same question set, the same players and the
+  // same join code - so "play again" doesn't make the room re-scan anything.
+  "session:restart": (payload: { sessionId: string }, ack?: (res: AckResponse<null>) => void) => void;
   // No playerId: the server resolves the answering player from the socket
   // that joined, so a player can only ever answer as themselves.
   "answer:submit": (
