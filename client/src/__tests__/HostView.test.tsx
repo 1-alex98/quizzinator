@@ -23,12 +23,16 @@ vi.mock("../lib/socket.js", () => ({
 
 // react-leaflet needs real layout/DOM measurement jsdom doesn't provide;
 // stub it with plain elements for the geo reveal map.
+const mapMock = { setView: vi.fn(), fitBounds: vi.fn() };
+
 vi.mock("react-leaflet", () => ({
   MapContainer: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   TileLayer: () => null,
   Marker: ({ children }: { children?: React.ReactNode }) => <div data-testid="correct-pin">{children}</div>,
   CircleMarker: ({ children }: { children?: React.ReactNode }) => <div data-testid="guess-pin">{children}</div>,
   Popup: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  Tooltip: ({ children }: { children?: React.ReactNode }) => <div data-testid="guess-label">{children}</div>,
+  useMap: () => mapMock,
 }));
 
 function renderAt(sessionId: string) {
@@ -77,6 +81,8 @@ describe("HostView", () => {
     socketMock.emit.mockReset();
     socketMock.on.mockReset();
     socketMock.off.mockReset();
+    mapMock.setView.mockReset();
+    mapMock.fitBounds.mockReset();
     sessionStorage.clear();
   });
 
@@ -245,6 +251,57 @@ describe("HostView", () => {
 
     expect(screen.getByTestId("correct-pin")).toBeTruthy();
     expect(screen.getByTestId("guess-pin")).toBeTruthy();
+  });
+
+  it("names the three closest guesses on the geo reveal map and frames them", () => {
+    const players = [
+      { id: "p1", name: "Alice", connected: true, score: 0 },
+      { id: "p2", name: "Bob", connected: true, score: 0 },
+      { id: "p3", name: "Cleo", connected: true, score: 0 },
+      { id: "p4", name: "Dan", connected: true, score: 0 },
+    ];
+    joinsAs({ players, totalQuestions: 1 });
+    const handlers = captureSocketHandlers();
+    renderAt("s1");
+
+    handlers.fire("question:show", {
+      question: { id: "q1", type: "geo", prompt: "Where?", points: 100, maxDistanceKm: 1000 },
+      index: 0,
+      total: 1,
+      endsAt: Date.now() + 30_000,
+      timeLimitSec: 30,
+    });
+
+    handlers.fire("question:revealed", {
+      index: 0,
+      correctAnswer: { correctLat: 52.52, correctLng: 13.405 },
+      results: [
+        // Deliberately out of order, and with the runaway guess last: the
+        // labels follow distance, not the order answers arrived.
+        { playerId: "p2", value: { lat: 50, lng: 14 }, score: 60, correct: false, totalScore: 60, distanceKm: 285 },
+        { playerId: "p1", value: { lat: 52.3, lng: 13.4 }, score: 90, correct: true, totalScore: 90, distanceKm: 24 },
+        { playerId: "p4", value: { lat: -33, lng: 151 }, score: 0, correct: false, totalScore: 0, distanceKm: 16_000 },
+        { playerId: "p3", value: { lat: 48, lng: 11 }, score: 30, correct: false, totalScore: 30, distanceKm: 550 },
+      ],
+      leaderboard: players,
+    });
+
+    // Markers keep the order the results arrived in; the rank is in the label.
+    const labels = screen
+      .getAllByTestId("guess-label")
+      .map((el) => el.textContent ?? "")
+      .sort();
+    expect(labels).toEqual(["1. Alice · 24 km", "2. Bob · 285 km", "3. Cleo · 550 km"]);
+    // Every guess still gets a dot, including the one too far away to name.
+    expect(screen.getAllByTestId("guess-pin")).toHaveLength(4);
+    // The far-flung guess must not drag the viewport back out to the world map.
+    const [bounds] = mapMock.fitBounds.mock.calls.at(-1) as [[number, number][]];
+    expect(bounds).toEqual([
+      [52.52, 13.405],
+      [52.3, 13.4],
+      [50, 14],
+      [48, 11],
+    ]);
   });
 
   it("shows the accepted answers and per-player guesses on a fuzzy-text reveal", () => {
