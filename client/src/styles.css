@@ -32,12 +32,32 @@
   min-height: 0;
 }
 
-/* Host reveal map: a fixed slot on the big screen, next to the leaderboard. */
+/* Host reveal map: a fixed slot on the big screen, next to the leaderboard.
+   It is the thing the room is reading from a sofa, so it takes the largest
+   slot the reveal screen can spare above the prompt. */
 .geo-reveal__map {
   width: 100%;
-  height: min(42vh, 420px);
+  height: min(56vh, 560px);
   border-radius: 20px;
   overflow: hidden;
+}
+
+/* Leaflet's tooltip is a pale bubble with a 11px font - unreadable on a TV
+   and wrong against the dark theme. These are the name labels on the closest
+   guesses, so they have to carry across the room. */
+.geo-reveal__map .geo-reveal__label {
+  background: rgba(16, 18, 42, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font-size: clamp(0.85rem, 1.4vw, 1.15rem);
+  font-weight: 600;
+  padding: 2px 8px;
+  box-shadow: none;
+  white-space: nowrap;
+}
+
+.geo-reveal__map .geo-reveal__label::before {
+  border-top-color: rgba(16, 18, 42, 0.92);
 }
 
 /* Leaflet puts its zoom control in the top-left corner, which is exactly

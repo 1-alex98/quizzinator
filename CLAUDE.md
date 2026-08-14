@@ -98,6 +98,23 @@ scrolled off. The prompt block is `flex: 1 1 auto` with an auto `min-height`
 for the same reason: it still grows into spare space, but a block that shrank
 below its own contents would paint the prompt over the first answer option.
 
+**The geo reveal map frames the story, it doesn't just centre it.** The TV's
+reveal map used to sit at a fixed zoom 3 on the correct location, which meant
+the room usually stared at an ocean while the pins that mattered were dots a
+few pixels wide. It now fits its viewport to the correct pin *plus the three
+closest guesses* (`padding`, `maxZoom: 6` so a city-sized cluster doesn't zoom
+to street level), and it fills `min(56vh, 560px)` instead of `min(42vh, 420px)`.
+Two deliberate choices:
+- **The whole field can't drive the bounds.** One guess in the wrong hemisphere
+  would zoom the reveal straight back out to the world map, so only the named
+  three are framed. Every guess still gets a dot — the far-flung ones are
+  simply off-screen until someone drags the map.
+- **The top three carry their names on the map**, as permanent Leaflet
+  tooltips (`1. Alice · 24 km`), because nobody clicks a popup on a TV — the
+  ranking is by distance, which is what "who got closest" means on a geo
+  question, and the label is styled dark and `clamp()`ed up from Leaflet's
+  11px default so it reads from a sofa.
+
 **A URL that doesn't load says so.** `media.imageUrl` points at the open
 internet, and sets written by an LLM routinely carry URLs that 404 (or hosts
 that refuse hotlinking, or a phone that is on the venue wifi but not online).
@@ -402,3 +419,5 @@ All gameplay, the question-set import pipeline, and CI/CD are implemented:
    under "Question types" above, replacing the 46vh/28vh caps, plus the
    phone's full-screen "Enlarge" viewer and a geo question panel that
    shrinks back to the map when its image is hidden.
+9. A readable geo reveal — the bigger, self-framing reveal map with the
+   three closest guesses named on it (see "Question types" above).
